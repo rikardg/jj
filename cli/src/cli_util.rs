@@ -3160,6 +3160,17 @@ Discard the conflicting changes with `jj restore --from {}`.",
             short_commit_hash(new_commit.id())
         )?;
     }
+    if stats.lfs_missing_objects != 0 {
+        writeln!(
+            ui.warning_default(),
+            "{} file(s) are LFS pointers because the objects are not in the local cache.",
+            stats.lfs_missing_objects
+        )?;
+        writeln!(
+            ui.hint_default(),
+            "Run `jj git fetch` to download the LFS objects."
+        )?;
+    }
     Ok(())
 }
 

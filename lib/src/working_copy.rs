@@ -273,6 +273,9 @@ pub struct CheckoutStats {
     /// working copy but were skipped because there was an untracked (probably
     /// ignored) file in its place.
     pub skipped_files: u32,
+    /// The number of LFS files written as raw pointers because the object
+    /// was not found in the local LFS cache.
+    pub lfs_missing_objects: u32,
 }
 
 /// The working-copy checkout failed.
