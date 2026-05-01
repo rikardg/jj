@@ -320,15 +320,21 @@ impl GitSubprocessContext {
 
     /// Push LFS objects to a remote.
     ///
-    /// Runs `git lfs push --all <remote>`. Must be called before `git push`
-    /// so that the remote has LFS objects before refs are updated.
+    /// Runs `git lfs push <remote> <ref>...` for the specific refs being
+    /// pushed. Must be called before `git push` so that the remote has LFS
+    /// objects before refs are updated.
     pub(crate) fn spawn_lfs_push(
         &self,
         remote_name: &RemoteName,
+        new_targets: &[String],
     ) -> Result<(), GitSubprocessError> {
+        if new_targets.is_empty() {
+            return Ok(());
+        }
         let mut command = self.create_command();
         command.stdout(Stdio::null());
-        command.args(["lfs", "push", "--all", "--", remote_name.as_str()]);
+        command.args(["lfs", "push", "--", remote_name.as_str()]);
+        command.args(new_targets);
 
         let output = wait_with_output(self.spawn_cmd(command)?)?;
         if !output.status.success() {

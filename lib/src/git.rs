@@ -3482,10 +3482,21 @@ pub fn push_updates(
         .map(|full_refspec| RefToPush::new(full_refspec, &qualified_remote_refs_expected_locations))
         .collect();
 
-    if lfs_enabled
-        && let Err(err) = git_ctx.spawn_lfs_push(remote_name)
-    {
-        tracing::warn!(?err, "LFS push failed (is git-lfs installed?)");
+    if lfs_enabled {
+        let lfs_objects_dir = git_backend.git_repo_path().join("lfs/objects");
+        let has_lfs_objects = std::fs::read_dir(&lfs_objects_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        if has_lfs_objects {
+            let new_targets: Vec<String> = updates
+                .iter()
+                .filter_map(|u| u.targets.after.as_ref())
+                .map(|oid| oid.to_string())
+                .collect();
+            if let Err(err) = git_ctx.spawn_lfs_push(remote_name, &new_targets) {
+                tracing::warn!(?err, "LFS push failed (is git-lfs installed?)");
+            }
+        }
     }
 
     let mut push_stats = git_ctx.spawn_push(remote_name, &refs_to_push, callback, options)?;
