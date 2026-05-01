@@ -5123,6 +5123,7 @@ fn test_push_bookmarks_success() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5199,6 +5200,7 @@ fn test_push_bookmarks_deletion() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5273,6 +5275,7 @@ fn test_push_bookmarks_mixed_deletion_and_addition() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5356,6 +5359,7 @@ fn test_push_bookmarks_not_fast_forward() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5411,6 +5415,7 @@ fn test_push_bookmarks_partial_success() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5513,6 +5518,7 @@ fn test_push_bookmarks_unmapped_refs() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -5608,6 +5614,7 @@ fn test_push_new_tags() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5700,6 +5707,7 @@ fn test_push_deleted_tags() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5767,6 +5775,7 @@ fn test_push_moved_tags_without_fetching() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5797,6 +5806,7 @@ fn test_push_moved_tags_without_fetching() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5868,6 +5878,7 @@ fn test_push_deleted_tags_without_fetching() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5895,6 +5906,7 @@ fn test_push_deleted_tags_without_fetching() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     assert_eq!(stats.pushed.len(), 2);
     assert!(stats.all_ok());
@@ -5965,6 +5977,7 @@ fn test_push_updates_unexpectedly_moved_sideways_on_remote() -> TestResult {
             &targets,
             &mut NullCallback,
             &GitPushOptions::default(),
+            false,
         )
     };
 
@@ -6050,6 +6063,7 @@ fn test_push_updates_unexpectedly_moved_forward_on_remote() -> TestResult {
             &targets,
             &mut NullCallback,
             &GitPushOptions::default(),
+            false,
         )
     };
 
@@ -6115,6 +6129,7 @@ fn test_push_updates_unexpectedly_exists_on_remote() -> TestResult {
             &targets,
             &mut NullCallback,
             &GitPushOptions::default(),
+            false,
         )
     };
 
@@ -6153,6 +6168,7 @@ fn test_push_updates_success() -> TestResult {
         }],
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
     insta::assert_debug_snapshot!(stats, @r#"
     GitPushStats {
@@ -6198,6 +6214,7 @@ fn test_push_updates_no_such_remote() -> TestResult {
         }],
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     );
     assert_matches!(result, Err(GitPushError::NoSuchRemote(_)));
     Ok(())
@@ -6220,6 +6237,7 @@ fn test_push_updates_invalid_remote() -> TestResult {
         }],
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     );
     assert_matches!(result, Err(GitPushError::NoSuchRemote(_)));
     Ok(())
@@ -6256,6 +6274,7 @@ fn test_push_environment_options() -> TestResult {
         &targets,
         &mut NullCallback,
         &GitPushOptions::default(),
+        false,
     )?;
 
     assert!(trace_path.exists());
@@ -6904,6 +6923,7 @@ fn test_push_updates_with_options() -> TestResult {
                 "merge_request.draft".to_owned(),
             ],
         },
+        false,
     )?;
 
     let stats = result;

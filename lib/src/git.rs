@@ -43,6 +43,7 @@ use crate::backend::CommitId;
 use crate::backend::TreeValue;
 use crate::commit::Commit;
 use crate::config::ConfigGetError;
+use crate::config::ConfigGetResultExt as _;
 use crate::file_util::IoResultExt as _;
 use crate::file_util::PathError;
 use crate::file_util::is_empty_dir;
@@ -112,16 +113,32 @@ pub struct GitSettings {
     pub executable_path: PathBuf,
     pub record_synthetic_predecessors: bool,
     pub write_change_id_header: bool,
+    pub ignore_filters: Vec<String>,
+    /// Whether Git LFS support is enabled.
+    pub lfs: bool,
 }
 
 impl GitSettings {
     pub fn from_settings(settings: &UserSettings) -> Result<Self, ConfigGetError> {
+        let lfs: bool = settings
+            .get("git.lfs")
+            .optional()?
+            .unwrap_or(true);
+        let mut ignore_filters: Vec<String> = settings
+            .get("git.ignore-filters")
+            .optional()?
+            .unwrap_or_else(|| vec!["lfs".to_string()]);
+        if lfs {
+            ignore_filters.retain(|f| f != "lfs");
+        }
         Ok(Self {
             abandon_unreachable_commits: settings.get_bool("git.abandon-unreachable-commits")?,
             executable_path: settings.get("git.executable-path")?,
             record_synthetic_predecessors: settings
                 .get_bool("git.record-synthetic-predecessors")?,
             write_change_id_header: settings.get("git.write-change-id-header")?,
+            ignore_filters,
+            lfs,
         })
     }
 
@@ -3259,6 +3276,7 @@ pub struct GitFetch<'a> {
     git_ctx: GitSubprocessContext,
     import_options: &'a GitImportOptions,
     fetched: Vec<FetchedRefs>,
+    lfs_enabled: bool,
 }
 
 impl<'a> GitFetch<'a> {
@@ -3276,7 +3294,14 @@ impl<'a> GitFetch<'a> {
             git_ctx,
             import_options,
             fetched: vec![],
+            lfs_enabled: false,
         })
+    }
+
+    /// Enable Git LFS fetch after each `git fetch`.
+    pub fn with_lfs(mut self, enabled: bool) -> Self {
+        self.lfs_enabled = enabled;
+        self
     }
 
     /// Perform a `git fetch` on the local git repo, updating the
@@ -3355,6 +3380,13 @@ impl<'a> GitFetch<'a> {
             bookmark_matcher: expr.bookmark.to_matcher(),
             tag_matcher: expr.tag.to_matcher(),
         });
+
+        if self.lfs_enabled
+            && let Err(err) = self.git_ctx.spawn_lfs_fetch(remote_name)
+        {
+            tracing::warn!(?err, "LFS fetch failed (is git-lfs installed?)");
+        }
+
         Ok(())
     }
 
@@ -3452,6 +3484,7 @@ pub fn push_refs(
     targets: &GitPushRefTargets,
     callback: &mut dyn GitSubprocessCallback,
     options: &GitPushOptions,
+    lfs_enabled: bool,
 ) -> Result<GitPushStats, GitPushError> {
     validate_remote_name(remote)?;
 
@@ -3492,6 +3525,7 @@ pub fn push_refs(
         &ref_updates,
         callback,
         options,
+        lfs_enabled,
     )?;
     tracing::debug!(?push_stats);
 
@@ -3566,6 +3600,7 @@ pub fn push_updates(
     updates: &[GitRefUpdate],
     callback: &mut dyn GitSubprocessCallback,
     options: &GitPushOptions,
+    lfs_enabled: bool,
 ) -> Result<GitPushStats, GitPushError> {
     let mut qualified_remote_refs_expected_locations = HashMap::new();
     let mut refspecs = vec![];
@@ -3603,6 +3638,12 @@ pub fn push_updates(
         .iter()
         .map(|full_refspec| RefToPush::new(full_refspec, &qualified_remote_refs_expected_locations))
         .collect();
+
+    if lfs_enabled
+        && let Err(err) = git_ctx.spawn_lfs_push(remote_name)
+    {
+        tracing::warn!(?err, "LFS push failed (is git-lfs installed?)");
+    }
 
     let mut push_stats = git_ctx.spawn_push(remote_name, &refs_to_push, callback, options)?;
     push_stats.pushed.sort();

@@ -37,8 +37,9 @@ a comparison with Git, including how workflows are different, see the
   working-copy commit. It's recommended to set up the ignore patterns earlier.
   The `.gitignore` support uses a native implementation, so please report a bug
   if you notice any difference compared to `git`.
-* **.gitattributes: No.** There's [#53](https://github.com/jj-vcs/jj/issues/53)
-  about adding support for at least the `eol` attribute.
+* **.gitattributes: Limited.** Files matching configured `filter` attributes
+  can be excluded from snapshots. Other attributes, such as `eol`, are not
+  supported yet. See [#53](https://github.com/jj-vcs/jj/issues/53).
 * **Hooks: No.** There's [#405](https://github.com/jj-vcs/jj/issues/405)
   specifically for providing the checks from <https://pre-commit.com>.
 * **Merge commits: Yes.** Octopus merges (i.e. with more than 2 parents) are
@@ -71,7 +72,12 @@ a comparison with Git, including how workflows are different, see the
 * **Signed commits: Yes.**
   You can sign commits automatically [by configuration](config.md#commit-signing),
   or use the `jj sign` command.
-* **Git LFS: No.** ([#80](https://github.com/jj-vcs/jj/issues/80))
+* **Git LFS: Yes.** When `git.lfs = true` (the default), files with
+  `filter=lfs` in `.gitattributes` are processed through the LFS clean/smudge
+  pipeline during snapshot and checkout. LFS objects are fetched after
+  `git fetch` and pushed before `git push`. Requires `git-lfs` to be installed
+  for network operations; local cache access is handled natively.
+  ([#80](https://github.com/jj-vcs/jj/issues/80))
 
 ## Creating an empty repo
 
