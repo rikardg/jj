@@ -1881,3 +1881,78 @@ fn test_split_with_editor_without_message() -> TestResult {
     ");
     Ok(())
 }
+
+#[test]
+fn test_split_with_diff_file() -> TestResult {
+    let mut test_env = TestEnvironment::default();
+    let edit_script = test_env.set_up_fake_editor();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    // Create initial commit with two files.
+    work_dir.write_file("file1", "a\nb\nc\n");
+    work_dir.write_file("file2", "x\ny\nz\n");
+    work_dir.run_jj(["commit", "-m", "initial"]).success();
+
+    // Modify both files in the working copy.
+    work_dir.write_file("file1", "a\nB\nc\n");
+    work_dir.write_file("file2", "x\nY\nz\n");
+
+    // Write a diff that only selects the file1 change.
+    let diff_content = "\
+diff --git a/file1 b/file1
+--- a/file1
++++ b/file1
+@@ -1,3 +1,3 @@
+ a
+-b
++B
+ c
+";
+    let diff_path = test_env.env_root().join("split.patch");
+    std::fs::write(&diff_path, diff_content)?;
+
+    std::fs::write(&edit_script, "write\nfirst split\n")?;
+    let output = work_dir.run_jj(["split", "--diff", diff_path.to_str().unwrap()]);
+    insta::assert_snapshot!(output, @"
+    ------- stderr -------
+    Hint: Using default editor ':builtin'; run `jj config set --user ui.diff-editor :builtin` to disable this message.
+    Selected changes : rlvkpnrz a04d4871 first split
+    Remaining changes: kkmpptxz d6530ebc (no description set)
+    Working copy  (@) now at: kkmpptxz d6530ebc (no description set)
+    Parent commit (@-)      : rlvkpnrz a04d4871 first split
+    [EOF]
+    ");
+
+    // Verify first commit has only file1 change.
+    let diff1 = work_dir.run_jj(["diff", "-r", "@-", "--git"]);
+    insta::assert_snapshot!(diff1, @"
+    diff --git a/file1 b/file1
+    index de980441c3..7be73ce3c1 100644
+    --- a/file1
+    +++ b/file1
+    @@ -1,3 +1,3 @@
+     a
+    -b
+    +B
+     c
+    [EOF]
+    ");
+
+    // Verify second commit has only file2 change.
+    let diff2 = work_dir.run_jj(["diff", "-r", "@", "--git"]);
+    insta::assert_snapshot!(diff2, @"
+    diff --git a/file2 b/file2
+    index 04ec35a6dc..20a747dffc 100644
+    --- a/file2
+    +++ b/file2
+    @@ -1,3 +1,3 @@
+     x
+    -y
+    +Y
+     z
+    [EOF]
+    ");
+
+    Ok(())
+}

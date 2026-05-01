@@ -244,6 +244,12 @@ impl From<io::Error> for CommandError {
     }
 }
 
+impl From<crate::diff_apply::DiffApplyError> for CommandError {
+    fn from(err: crate::diff_apply::DiffApplyError) -> Self {
+        Self::new(CommandErrorKind::User, err)
+    }
+}
+
 impl From<jj_lib::file_util::PathError> for CommandError {
     fn from(err: jj_lib::file_util::PathError) -> Self {
         user_error(err)

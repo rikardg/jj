@@ -23,6 +23,7 @@ pub mod commit_templater;
 pub mod complete;
 pub mod config;
 pub mod description_util;
+pub mod diff_apply;
 pub mod diff_util;
 pub mod formatter;
 pub mod generic_templater;

@@ -17,12 +17,15 @@ use std::io::Write as _;
 use clap_complete::ArgValueCandidates;
 use clap_complete::ArgValueCompleter;
 use jj_lib::backend::CommitId;
+use jj_lib::backend::TreeValue;
 use jj_lib::commit::Commit;
 use jj_lib::matchers::Matcher;
 use jj_lib::merge::Diff;
 use jj_lib::merge::Merge;
 use jj_lib::merged_tree::MergedTree;
+use jj_lib::merged_tree_builder::MergedTreeBuilder;
 use jj_lib::object_id::ObjectId as _;
+use jj_lib::repo_path::RepoPathBuf;
 use jj_lib::rewrite::CommitRewriter;
 use jj_lib::rewrite::CommitWithSelection;
 use jj_lib::rewrite::EmptyBehavior;
@@ -32,6 +35,7 @@ use jj_lib::rewrite::RebaseOptions;
 use jj_lib::rewrite::RebasedCommit;
 use jj_lib::rewrite::RewriteRefsOptions;
 use jj_lib::rewrite::move_commits;
+use tokio::io::AsyncReadExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -47,6 +51,7 @@ use crate::description_util::add_trailers;
 use crate::description_util::description_template;
 use crate::description_util::edit_description;
 use crate::description_util::join_message_paragraphs;
+use crate::diff_apply;
 use crate::ui::Ui;
 
 /// Split a revision in two
@@ -193,6 +198,15 @@ pub(crate) struct SplitArgs {
     #[arg(long, short)]
     parallel: bool,
 
+    /// Apply a unified diff (git diff format) to select changes for the first
+    /// commit, instead of opening an interactive editor.
+    ///
+    /// The diff describes the changes (relative to the parent) to include in
+    /// the first commit. Use `-` to read from stdin. This is useful for
+    /// non-interactive / agent-driven workflows.
+    #[arg(long, conflicts_with_all = ["interactive", "tool"], value_name = "FILE")]
+    diff: Option<String>,
+
     /// Files matching any of these filesets are put in the selected changes
     #[arg(value_name = "FILESETS", value_hint = clap::ValueHint::AnyPath)]
     #[arg(add = ArgValueCompleter::new(complete::modified_revision_files))]
@@ -290,7 +304,11 @@ pub(crate) async fn cmd_split(
     let mut tx = workspace_command.start_transaction();
 
     // Prompt the user to select the changes they want for the first commit.
-    let target = select_diff(ui, &tx, &target_commit, &matcher, &diff_selector).await?;
+    let target = if let Some(diff_path) = &args.diff {
+        build_selection_from_diff(diff_path, &tx, &target_commit).await?
+    } else {
+        select_diff(ui, &tx, &target_commit, &matcher, &diff_selector).await?
+    };
 
     // Create the first commit, which includes the changes selected by the user.
     let first_commit = {
@@ -597,4 +615,101 @@ The changes that are not selected will replace the original commit.
     }
 
     Ok(selection)
+}
+
+/// Builds a `CommitWithSelection` by applying a unified diff to the parent
+/// tree instead of using an interactive editor.
+async fn build_selection_from_diff(
+    diff_path: &str,
+    tx: &WorkspaceCommandTransaction<'_>,
+    target_commit: &Commit,
+) -> Result<CommitWithSelection, CommandError> {
+    use jj_lib::backend::CopyId;
+    use jj_lib::repo::Repo as _;
+
+    let diff_content = if diff_path == "-" {
+        std::io::read_to_string(std::io::stdin())?
+    } else {
+        std::fs::read_to_string(diff_path)?
+    };
+
+    let file_diffs = diff_apply::parse_unified_diff(&diff_content)?;
+    if file_diffs.is_empty() {
+        return Err(CommandError::from(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "diff file contains no changes",
+        )));
+    }
+
+    let parent_tree = target_commit.parent_tree(tx.repo()).await?;
+    let store = tx.repo().store().clone();
+    let mut builder = MergedTreeBuilder::new(parent_tree.clone());
+
+    for file_diff in &file_diffs {
+        let repo_path = RepoPathBuf::from_internal_string(&file_diff.path).map_err(|err| {
+            CommandError::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                err.to_string(),
+            ))
+        })?;
+
+        if file_diff.is_deleted {
+            builder.set_or_remove(repo_path, Merge::resolved(None));
+            continue;
+        }
+
+        let old_content = if file_diff.is_new {
+            String::new()
+        } else {
+            let value = parent_tree.path_value(&repo_path).await?;
+            match value.into_resolved() {
+                Ok(Some(TreeValue::File { id, .. })) => {
+                    let mut reader = store.read_file(&repo_path, &id).await?;
+                    let mut content = Vec::new();
+                    reader.read_to_end(&mut content).await.map_err(|err| {
+                        CommandError::from(std::io::Error::new(err.kind(), err.to_string()))
+                    })?;
+                    String::from_utf8(content).map_err(|_| {
+                        CommandError::from(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("File `{}` is not valid UTF-8", file_diff.path),
+                        ))
+                    })?
+                }
+                _ => String::new(),
+            }
+        };
+
+        let new_content =
+            diff_apply::apply_hunks(&file_diff.path, &old_content, &file_diff.hunks)?;
+
+        let mut cursor = std::io::Cursor::new(new_content.into_bytes());
+        let file_id = store.write_file(&repo_path, &mut cursor).await?;
+
+        let executable = if !file_diff.is_new {
+            match parent_tree.path_value(&repo_path).await?.into_resolved() {
+                Ok(Some(TreeValue::File { executable, .. })) => executable,
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        builder.set_or_remove(
+            repo_path,
+            Merge::resolved(Some(TreeValue::File {
+                id: file_id,
+                executable,
+                copy_id: CopyId::placeholder(),
+            })),
+        );
+    }
+
+    let selected_tree = builder.write_tree().await?;
+
+    Ok(CommitWithSelection {
+        commit: target_commit.clone(),
+        selected_tree,
+        parent_tree,
+    })
 }
