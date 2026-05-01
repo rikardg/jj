@@ -2514,7 +2514,11 @@ impl TreeState {
                                 if let Some(git_dir) = self.git_dir() {
                                     match git_lfs::read_lfs_object(git_dir, &pointer) {
                                         Ok(lfs_file) => Some(Box::new(
-                                            BlockingAsyncReader::new(lfs_file),
+                                            BlockingAsyncReader::new(
+                                                std::io::BufReader::with_capacity(
+                                                    65536, lfs_file,
+                                                ),
+                                            ),
                                         )
                                             as Box<dyn AsyncRead + Send + Unpin>),
                                         Err(_) => {
