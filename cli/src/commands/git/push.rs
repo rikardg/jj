@@ -565,6 +565,7 @@ pub async fn cmd_git_push(
         &ref_updates,
         &mut GitSubprocessUi::new(ui),
         &options,
+        git_settings.lfs,
     )?;
     print_push_stats(ui, &push_stats)?;
     // TODO: On partial success, locally-created --change/--named bookmarks will
