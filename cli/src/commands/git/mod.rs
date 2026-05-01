@@ -18,6 +18,7 @@ mod export;
 mod fetch;
 mod import;
 mod init;
+mod lfs;
 mod push;
 mod remote;
 mod root;
@@ -46,6 +47,8 @@ use self::import::GitImportArgs;
 use self::import::cmd_git_import;
 use self::init::GitInitArgs;
 use self::init::cmd_git_init;
+use self::lfs::LfsCommand;
+use self::lfs::cmd_git_lfs;
 use self::push::GitPushArgs;
 use self::push::cmd_git_push;
 pub use self::push::is_push_operation;
@@ -78,6 +81,8 @@ pub enum GitCommand {
     Fetch(GitFetchArgs),
     Import(GitImportArgs),
     Init(GitInitArgs),
+    #[command(subcommand)]
+    Lfs(LfsCommand),
     Push(GitPushArgs),
     #[command(subcommand)]
     Remote(RemoteCommand),
@@ -96,6 +101,7 @@ pub async fn cmd_git(
         GitCommand::Fetch(args) => cmd_git_fetch(ui, command, args).await,
         GitCommand::Import(args) => cmd_git_import(ui, command, args).await,
         GitCommand::Init(args) => cmd_git_init(ui, command, args).await,
+        GitCommand::Lfs(subcommand) => cmd_git_lfs(ui, command, subcommand).await,
         GitCommand::Push(args) => cmd_git_push(ui, command, args).await,
         GitCommand::Remote(args) => cmd_git_remote(ui, command, args).await,
         GitCommand::Root(args) => cmd_git_root(ui, command, args).await,
