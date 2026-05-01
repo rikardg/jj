@@ -99,16 +99,13 @@ pub fn read_lfs_object(git_dir: &Path, pointer: &LfsPointer) -> io::Result<File>
 /// Returns the LFS pointer for the written content. Uses atomic
 /// write (temp file + rename) to handle concurrent writes safely.
 pub fn write_lfs_object(git_dir: &Path, mut content: impl Read) -> io::Result<LfsPointer> {
-    let lfs_objects_dir = git_dir.join("lfs").join("objects");
-
-    // Stream content through SHA-256 hasher into a temp file.
     let tmp_dir = git_dir.join("lfs").join("tmp");
     fs::create_dir_all(&tmp_dir)?;
-    let mut tmp_file = tempfile::NamedTempFile::new_in(&tmp_dir)?;
+    let mut tmp_file = io::BufWriter::new(tempfile::NamedTempFile::new_in(&tmp_dir)?);
 
     let mut hasher = Sha256::new();
     let mut size: u64 = 0;
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; 65536];
     loop {
         let n = content.read(&mut buf)?;
         if n == 0 {
@@ -119,30 +116,30 @@ pub fn write_lfs_object(git_dir: &Path, mut content: impl Read) -> io::Result<Lf
         size += n as u64;
     }
     tmp_file.flush()?;
+    let tmp_file = tmp_file.into_inner()?;
 
     let hash = hasher.finalize();
     let oid = hex::encode(hash);
+    let dest = lfs_cache_path(git_dir, &oid);
 
-    let dest = lfs_cache_path(lfs_objects_dir.parent().unwrap().parent().unwrap(), &oid);
+    // Already cached — discard the temp file.
+    if dest.exists() {
+        return Ok(LfsPointer { oid, size });
+    }
+
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Atomic rename. If the file already exists (concurrent write of same
-    // content), the rename either succeeds or the existing file is identical.
     match tmp_file.persist(&dest) {
         Ok(_) => {}
         Err(e) if dest.exists() => {
-            // Another writer already placed the same content — safe to ignore.
             drop(e);
         }
         Err(e) => return Err(e.error),
     }
 
-    Ok(LfsPointer {
-        oid,
-        size,
-    })
+    Ok(LfsPointer { oid, size })
 }
 
 /// Hex-encode helper (avoids pulling in the `hex` crate).
