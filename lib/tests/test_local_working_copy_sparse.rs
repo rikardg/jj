@@ -81,6 +81,7 @@ fn test_sparse_checkout() -> TestResult {
             added_files: 0,
             removed_files: 3,
             skipped_files: 0,
+            lfs_missing_objects: 0,
         }
     );
     assert_eq!(locked_ws.locked_wc().sparse_patterns()?, sparse_patterns);
@@ -150,6 +151,7 @@ fn test_sparse_checkout() -> TestResult {
             added_files: 2,
             removed_files: 2,
             skipped_files: 0,
+            lfs_missing_objects: 0,
         }
     );
     assert_eq!(locked_wc.sparse_patterns()?, sparse_patterns);
