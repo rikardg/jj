@@ -96,49 +96,37 @@ pub fn read_lfs_object(git_dir: &Path, pointer: &LfsPointer) -> io::Result<File>
 
 /// Writes content to the LFS object cache using streaming SHA-256 hashing.
 ///
-/// Returns the LFS pointer for the written content. Hashes the content
-/// first, then skips the disk write entirely if the object is already
-/// cached. Uses atomic write (temp file + rename) for concurrent safety.
-pub fn write_lfs_object(
-    git_dir: &Path,
-    mut content: impl Read + io::Seek,
-) -> io::Result<LfsPointer> {
-    // Pass 1: hash to determine oid without writing anything.
+/// Returns the LFS pointer for the written content. Hashes and writes to
+/// a temp file in a single pass, then either persists or discards the temp
+/// file depending on whether the object was already cached.
+pub fn write_lfs_object(git_dir: &Path, mut content: impl Read) -> io::Result<LfsPointer> {
+    let tmp_dir = git_dir.join("lfs").join("tmp");
+    fs::create_dir_all(&tmp_dir)?;
+
     let mut hasher = Sha256::new();
     let mut size: u64 = 0;
     let mut buf = [0u8; 65536];
+    let mut tmp_file = io::BufWriter::new(tempfile::NamedTempFile::new_in(&tmp_dir)?);
+
     loop {
         let n = content.read(&mut buf)?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
-        size += n as u64;
-    }
-
-    let hash = hasher.finalize();
-    let oid = hex::encode(hash);
-    let dest = lfs_cache_path(git_dir, &oid);
-
-    if dest.exists() {
-        return Ok(LfsPointer { oid, size });
-    }
-
-    // Pass 2: object not cached — seek back and write to temp file.
-    content.rewind()?;
-
-    let tmp_dir = git_dir.join("lfs").join("tmp");
-    fs::create_dir_all(&tmp_dir)?;
-    let mut tmp_file = io::BufWriter::new(tempfile::NamedTempFile::new_in(&tmp_dir)?);
-    loop {
-        let n = content.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
         tmp_file.write_all(&buf[..n])?;
+        size += n as u64;
     }
     tmp_file.flush()?;
     let tmp_file = tmp_file.into_inner()?;
+
+    let oid = hex::encode(hasher.finalize());
+    let dest = lfs_cache_path(git_dir, &oid);
+
+    if dest.exists() {
+        // Already cached — discard the temp file.
+        return Ok(LfsPointer { oid, size });
+    }
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
