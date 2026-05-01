@@ -237,7 +237,8 @@ pub async fn cmd_git_fetch(
         tx.repo_mut(),
         git_settings.to_subprocess_options(),
         &import_options,
-    )?;
+    )?
+    .with_lfs(git_settings.lfs);
 
     for (remote, expanded) in expansions {
         let mut callback = GitSubprocessUi::new(ui);

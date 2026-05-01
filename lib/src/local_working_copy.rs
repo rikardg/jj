@@ -93,6 +93,16 @@ use crate::fsmonitor::FsmonitorSettings;
 use crate::fsmonitor::WatchmanConfig;
 #[cfg(feature = "watchman")]
 use crate::fsmonitor::watchman;
+#[cfg(feature = "git")]
+use crate::git::GitSettings;
+#[cfg(feature = "git")]
+use crate::git_backend::GitBackend;
+#[cfg(feature = "git")]
+use crate::git_lfs;
+use crate::gitattributes::DiskFileLoader;
+use crate::gitattributes::GitAttributes;
+use crate::gitattributes::SearchPriority;
+use crate::gitattributes::TreeFileLoader;
 use crate::gitignore::GitIgnoreFile;
 use crate::lock::FileLock;
 use crate::matchers::DifferenceMatcher;
@@ -975,6 +985,13 @@ pub struct TreeStateSettings {
     pub exec_change_setting: ExecChangeSetting,
     /// The fsmonitor (e.g. Watchman) to use, if any.
     pub fsmonitor_settings: FsmonitorSettings,
+
+    /// Names of .gitattributes filters whose matching files should be ignored
+    /// in the working copy.
+    pub ignore_filters: HashSet<String>,
+
+    /// Whether Git LFS support is enabled.
+    pub lfs_enabled: bool,
 }
 
 impl TreeStateSettings {
@@ -985,6 +1002,29 @@ impl TreeStateSettings {
             eol_conversion_mode: EolConversionMode::try_from_settings(user_settings)?,
             exec_change_setting: user_settings.get("working-copy.exec-bit-change")?,
             fsmonitor_settings: FsmonitorSettings::from_settings(user_settings)?,
+            ignore_filters: {
+                #[cfg(feature = "git")]
+                {
+                    GitSettings::from_settings(user_settings)?
+                        .ignore_filters
+                        .into_iter()
+                        .collect()
+                }
+                #[cfg(not(feature = "git"))]
+                {
+                    HashSet::new()
+                }
+            },
+            lfs_enabled: {
+                #[cfg(feature = "git")]
+                {
+                    GitSettings::from_settings(user_settings)?.lfs
+                }
+                #[cfg(not(feature = "git"))]
+                {
+                    false
+                }
+            },
         })
     }
 }
@@ -1009,6 +1049,8 @@ pub struct TreeState {
     exec_policy: ExecChangePolicy,
     fsmonitor_settings: FsmonitorSettings,
     target_eol_strategy: TargetEolStrategy,
+    ignore_filters: HashSet<String>,
+    lfs_enabled: bool,
 }
 
 #[derive(Debug, Error)]
@@ -1039,6 +1081,13 @@ impl TreeState {
 
     pub fn file_states(&self) -> FileStates<'_> {
         self.file_states.all()
+    }
+
+    #[cfg(feature = "git")]
+    fn git_dir(&self) -> Option<&Path> {
+        self.store
+            .backend_impl::<GitBackend>()
+            .map(|b| b.git_repo_path())
     }
 
     pub fn sparse_patterns(&self) -> &Vec<RepoPathBuf> {
@@ -1082,6 +1131,8 @@ impl TreeState {
             eol_conversion_mode,
             exec_change_setting,
             fsmonitor_settings,
+            ignore_filters,
+            lfs_enabled,
         }: &TreeStateSettings,
     ) -> Self {
         let exec_policy = ExecChangePolicy::new(*exec_change_setting, &state_path);
@@ -1099,6 +1150,8 @@ impl TreeState {
             exec_policy,
             fsmonitor_settings: fsmonitor_settings.clone(),
             target_eol_strategy: TargetEolStrategy::new(*eol_conversion_mode),
+            ignore_filters: ignore_filters.clone(),
+            lfs_enabled: *lfs_enabled,
         }
     }
 
@@ -1332,6 +1385,10 @@ impl TreeState {
         let (untracked_paths_tx, untracked_paths_rx) = channel();
         let (invalid_utf8_paths_tx, invalid_utf8_paths_rx) = channel();
         let (deleted_files_tx, deleted_files_rx) = channel();
+        let git_attributes = Arc::new(GitAttributes::new(
+            TreeFileLoader::new(self.tree.clone()),
+            DiskFileLoader::new(self.working_copy_path.clone()),
+        ));
 
         trace_span!("traverse filesystem").in_scope(|| -> Result<(), SnapshotError> {
             let snapshotter = FileSnapshotter {
@@ -1349,6 +1406,8 @@ impl TreeState {
                 error: OnceLock::new(),
                 progress: *progress,
                 max_new_file_size: *max_new_file_size,
+                git_attributes,
+                ignore_filters: self.ignore_filters.clone(),
             };
             let directory_to_visit = DirectoryToVisit {
                 dir: RepoPathBuf::root(),
@@ -1524,6 +1583,9 @@ struct FileSnapshotter<'a> {
     error: OnceLock<SnapshotError>,
     progress: Option<&'a SnapshotProgress<'a>>,
     max_new_file_size: u64,
+
+    git_attributes: Arc<GitAttributes>,
+    ignore_filters: HashSet<String>,
 }
 
 impl FileSnapshotter<'_> {
@@ -1671,7 +1733,16 @@ impl FileSnapshotter<'_> {
             if let Some(progress) = self.progress {
                 progress(&path);
             }
-            if maybe_current_file_state.is_none()
+            if self
+                .git_attributes
+                .filter_matches(&path, &self.ignore_filters, SearchPriority::Disk)
+                .block_on()
+            {
+                // Skip gitattributes files that we want to ignore - this
+                // would result in them showing up as deleted, but we also
+                // omit them in `emit_deleted_files` to avoid that.
+                Ok(None)
+            } else if maybe_current_file_state.is_none()
                 && (git_ignore.matches_file(&path) && !self.force_tracking_matcher.matches(&path))
             {
                 // If it wasn't already tracked and it matches
@@ -1814,6 +1885,13 @@ impl FileSnapshotter<'_> {
             .flat_map(|(_, chunk)| chunk)
             // Whether or not the entry exists, submodule should be ignored
             .filter(|(_, state)| state.file_type != FileType::GitSubmodule)
+            // Whether or not the entry exists, ignored gitattributes files should be omitted
+            .filter(|(path, _)| {
+                !self
+                    .git_attributes
+                    .filter_matches(path, &self.ignore_filters, SearchPriority::Disk)
+                    .block_on()
+            })
             .filter(|(path, _)| self.matcher.matches(path))
             .try_for_each(|(path, _)| self.deleted_files_tx.send(path.to_owned()))
             .ok();
@@ -1996,6 +2074,18 @@ impl FileSnapshotter<'_> {
         path: &RepoPath,
         disk_path: &Path,
     ) -> Result<FileId, SnapshotError> {
+        #[cfg(feature = "git")]
+        if self.tree_state.lfs_enabled {
+            let lfs_filters: HashSet<String> = ["lfs".to_string()].into_iter().collect();
+            if self
+                .git_attributes
+                .filter_matches(path, &lfs_filters, SearchPriority::Disk)
+                .block_on()
+            {
+                return self.write_lfs_file_to_store(path, disk_path).await;
+            }
+        }
+
         let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
@@ -2010,6 +2100,33 @@ impl FileSnapshotter<'_> {
                 err: err.into(),
             })?;
         Ok(self.store().write_file(path, &mut contents).await?)
+    }
+
+    #[cfg(feature = "git")]
+    async fn write_lfs_file_to_store(
+        &self,
+        path: &RepoPath,
+        disk_path: &Path,
+    ) -> Result<FileId, SnapshotError> {
+        let git_dir = self.tree_state.git_dir().ok_or_else(|| SnapshotError::Other {
+            message: "Git LFS requires a git backend".to_string(),
+            err: "no git backend found".into(),
+        })?;
+        let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
+            message: format!("Failed to open file {}", disk_path.display()),
+            err: err.into(),
+        })?;
+        let pointer =
+            git_lfs::write_lfs_object(git_dir, file).map_err(|err| SnapshotError::Other {
+                message: format!(
+                    "Failed to write LFS object for {}",
+                    path.as_internal_file_string()
+                ),
+                err: err.into(),
+            })?;
+        let pointer_bytes = git_lfs::generate_lfs_pointer(&pointer);
+        let mut cursor = std::io::Cursor::new(pointer_bytes);
+        Ok(self.store().write_file(path, &mut cursor).await?)
     }
 
     async fn write_symlink_to_store(
@@ -2216,6 +2333,18 @@ impl TreeState {
         new_tree: &MergedTree,
         matcher: &dyn Matcher,
     ) -> Result<CheckoutStats, CheckoutError> {
+        #[cfg(feature = "git")]
+        let lfs_git_attributes = if self.lfs_enabled {
+            Some(GitAttributes::new(
+                TreeFileLoader::new(new_tree.clone()),
+                DiskFileLoader::new(self.working_copy_path.clone()),
+            ))
+        } else {
+            None
+        };
+        #[cfg(feature = "git")]
+        let lfs_ignore_filters: HashSet<String> = ["lfs".to_string()].into_iter().collect();
+
         // TODO: maybe it's better not include the skipped counts in the "intended"
         // counts
         let mut stats = CheckoutStats {
@@ -2360,9 +2489,63 @@ impl TreeState {
                     deleted_files.insert(path);
                     return Ok(());
                 }
-                MaterializedTreeValue::File(file) => {
+                MaterializedTreeValue::File(mut file) => {
                     let exec_bit =
                         ExecBit::new_from_repo(file.executable, self.exec_policy, get_prev_exec);
+                    #[cfg(feature = "git")]
+                    let lfs_reader = if let Some(ref attrs) = lfs_git_attributes {
+                        if attrs
+                            .filter_matches(&path, &lfs_ignore_filters, SearchPriority::Store)
+                            .await
+                        {
+                            let mut content = Vec::new();
+                            file.reader.read_to_end(&mut content).await.map_err(
+                                |err| CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to read LFS content for {}",
+                                        path.as_internal_file_string()
+                                    ),
+                                    err: err.into(),
+                                },
+                            )?;
+                            if let Some(pointer) = git_lfs::parse_lfs_pointer(&content) {
+                                if let Some(git_dir) = self.git_dir() {
+                                    match git_lfs::read_lfs_object(git_dir, &pointer) {
+                                        Ok(lfs_file) => Some(Box::new(
+                                            BlockingAsyncReader::new(lfs_file),
+                                        )
+                                            as Box<dyn AsyncRead + Send + Unpin>),
+                                        Err(_) => {
+                                            tracing::warn!(
+                                                path = path.as_internal_file_string(),
+                                                "LFS object not in cache, writing pointer"
+                                            );
+                                            Some(Box::new(std::io::Cursor::new(content))
+                                                as Box<dyn AsyncRead + Send + Unpin>)
+                                        }
+                                    }
+                                } else {
+                                    Some(Box::new(std::io::Cursor::new(content))
+                                        as Box<dyn AsyncRead + Send + Unpin>)
+                                }
+                            } else {
+                                Some(Box::new(std::io::Cursor::new(content))
+                                    as Box<dyn AsyncRead + Send + Unpin>)
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    #[cfg(feature = "git")]
+                    if let Some(reader) = lfs_reader {
+                        self.write_file(&disk_path, reader, exec_bit, true).await?
+                    } else {
+                        self.write_file(&disk_path, file.reader, exec_bit, true)
+                            .await?
+                    }
+                    #[cfg(not(feature = "git"))]
                     self.write_file(&disk_path, file.reader, exec_bit, true)
                         .await?
                 }

@@ -119,6 +119,133 @@ fn test_snapshot_large_file() {
 }
 
 #[test]
+fn test_snapshot_ignores_git_lfs_filter_files() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    // Disable LFS so files with filter=lfs are ignored (old behavior)
+    test_env.add_config("git.lfs = false");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    work_dir.write_file("asset.bin", "stored content\n");
+
+    let output = work_dir.run_jj(["file", "list"]);
+    insta::assert_snapshot!(output, @"
+    .gitattributes
+    [EOF]
+    ");
+
+    let output = work_dir.run_jj(["file", "list", "--config=git.ignore-filters=[]"]);
+    insta::assert_snapshot!(output, @"
+    .gitattributes
+    asset.bin
+    [EOF]
+    ");
+
+    work_dir.run_jj(["new"]).success();
+    work_dir.write_file("asset.bin", "modified content\n");
+
+    let output = work_dir.run_jj(["diff", "--git"]);
+    insta::assert_snapshot!(output, @"");
+
+    let output = work_dir.run_jj(["diff", "--git", "--config=git.ignore-filters=[]"]);
+    insta::assert_snapshot!(output, @"
+    diff --git a/asset.bin b/asset.bin
+    index e66ceca96b..8f23831524 100644
+    --- a/asset.bin
+    +++ b/asset.bin
+    @@ -1,1 +1,1 @@
+    -stored content
+    +modified content
+    [EOF]
+    ");
+}
+
+#[test]
+fn test_lfs_snapshot_creates_pointer() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    work_dir.write_file("asset.bin", "stored content\n");
+
+    // With git.lfs=true (default), the file is tracked
+    let output = work_dir.run_jj(["file", "list"]);
+    insta::assert_snapshot!(output, @"
+    .gitattributes
+    asset.bin
+    [EOF]
+    ");
+
+    // The stored content should be an LFS pointer, not raw content
+    let output = work_dir.run_jj(["file", "show", "asset.bin"]);
+    let stdout = output.stdout.raw();
+    assert!(
+        stdout.starts_with("version https://git-lfs.github.com/spec/v1"),
+        "Expected LFS pointer, got: {stdout}"
+    );
+    assert!(stdout.contains("oid sha256:"));
+    assert!(stdout.contains("size 15"));
+}
+
+#[test]
+fn test_lfs_checkout_smudges_pointer() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    work_dir.write_file("asset.bin", "stored content\n");
+
+    // Snapshot to create the pointer and populate the LFS cache
+    work_dir.run_jj(["new"]).success();
+
+    // The working copy should have the original content, not the pointer
+    let on_disk = work_dir.read_file("asset.bin");
+    assert_eq!(on_disk, "stored content\n");
+}
+
+#[test]
+fn test_lfs_roundtrip() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    work_dir.write_file("asset.bin", "original LFS content\n");
+
+    // Snapshot creates pointer + caches content
+    work_dir.run_jj(["describe", "-m", "first"]).success();
+    // Capture the first commit id
+    let first_id = work_dir.run_jj(["log", "-r", "@", "-T", "commit_id", "--no-graph"]);
+    let first_id = first_id.stdout.raw().trim().to_string();
+
+    work_dir.run_jj(["new"]).success();
+
+    // Modify the file
+    work_dir.write_file("asset.bin", "modified LFS content\n");
+    work_dir.run_jj(["describe", "-m", "second"]).success();
+    let second_id = work_dir.run_jj(["log", "-r", "@", "-T", "commit_id", "--no-graph"]);
+    let second_id = second_id.stdout.raw().trim().to_string();
+
+    // Go back to first commit
+    work_dir.run_jj(["edit", &first_id]).success();
+
+    // Working copy should have the original content
+    let on_disk = work_dir.read_file("asset.bin");
+    assert_eq!(on_disk, "original LFS content\n");
+
+    // Go back to second commit
+    work_dir.run_jj(["edit", &second_id]).success();
+
+    // Working copy should have the modified content
+    let on_disk = work_dir.read_file("asset.bin");
+    assert_eq!(on_disk, "modified LFS content\n");
+}
+
+#[test]
 fn test_snapshot_large_file_restore() {
     let test_env = TestEnvironment::default();
     test_env.run_jj_in(".", ["git", "init", "repo"]).success();

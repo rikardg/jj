@@ -296,6 +296,44 @@ impl GitSubprocessContext {
 
         parse_git_push_output(output)
     }
+
+    /// Fetch LFS objects from a remote.
+    ///
+    /// Runs `git lfs fetch <remote>`. Stderr is captured (not displayed)
+    /// so that failures are silent — callers should treat errors as warnings.
+    pub(crate) fn spawn_lfs_fetch(
+        &self,
+        remote_name: &RemoteName,
+    ) -> Result<(), GitSubprocessError> {
+        let mut command = self.create_command();
+        command.stdout(Stdio::null());
+        command.args(["lfs", "fetch", "--", remote_name.as_str()]);
+
+        let output = wait_with_output(self.spawn_cmd(command)?)?;
+        if !output.status.success() {
+            return Err(external_git_error(&output.stderr));
+        }
+        Ok(())
+    }
+
+    /// Push LFS objects to a remote.
+    ///
+    /// Runs `git lfs push --all <remote>`. Must be called before `git push`
+    /// so that the remote has LFS objects before refs are updated.
+    pub(crate) fn spawn_lfs_push(
+        &self,
+        remote_name: &RemoteName,
+    ) -> Result<(), GitSubprocessError> {
+        let mut command = self.create_command();
+        command.stdout(Stdio::null());
+        command.args(["lfs", "push", "--all", "--", remote_name.as_str()]);
+
+        let output = wait_with_output(self.spawn_cmd(command)?)?;
+        if !output.status.success() {
+            return Err(external_git_error(&output.stderr));
+        }
+        Ok(())
+    }
 }
 
 /// Generate a GitSubprocessError::ExternalGitError if the stderr output was not

@@ -707,6 +707,7 @@ pub async fn cmd_gerrit_upload(
             }],
             &mut GitSubprocessUi::new(ui),
             &push_options,
+            false,
         )
         // Despite the fact that a manual git push will error out with 'no new
         // changes' if you're up to date, this git backend appears to silently

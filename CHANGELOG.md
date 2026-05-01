@@ -476,6 +476,12 @@ Thanks to the people who made this release happen!
 
 ### New features
 
+* Git LFS files are now automatically handled during checkout (smudge) and
+  snapshot (clean). LFS objects are fetched after `jj git fetch`/`clone` and
+  pushed before `jj git push`. Enabled by default; set `git.lfs = false` to
+  disable. Requires `git-lfs` to be installed for network operations and
+  snapshot of LFS-tracked files.
+
 * The `--pattern` flag for `file search` now accepts various pattern kinds through
   `kind:pattern` syntax.
 
@@ -615,6 +621,9 @@ None
 * `jj op show`, `jj op diff`, `jj op log -p` now only show "interesting"
   revisions by default (defined by `revsets.op-diff-changes-in`). A new flag,
   `--show-changes-in`, can be used to override this. [#6083](https://github.com/jj-vcs/jj/issues/6083)
+
+* Added `git.ignore-filters` setting to specify what filtered files in
+  `.gitattributes` are ignored by `jj`. Defaults to `["lfs"]`.
 
 ### Fixed bugs
 
