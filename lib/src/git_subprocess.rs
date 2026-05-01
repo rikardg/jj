@@ -299,15 +299,17 @@ impl GitSubprocessContext {
 
     /// Fetch LFS objects from a remote.
     ///
-    /// Runs `git lfs fetch <remote>`. Stderr is captured (not displayed)
-    /// so that failures are silent — callers should treat errors as warnings.
+    /// Runs `git lfs fetch --all <remote>`. Uses `--all` because
+    /// non-colocated repos lack a meaningful HEAD for ref-based fetching.
+    /// Stderr is captured (not displayed) so that failures are silent —
+    /// callers should treat errors as warnings.
     pub(crate) fn spawn_lfs_fetch(
         &self,
         remote_name: &RemoteName,
     ) -> Result<(), GitSubprocessError> {
         let mut command = self.create_command();
         command.stdout(Stdio::null());
-        command.args(["lfs", "fetch", "--", remote_name.as_str()]);
+        command.args(["lfs", "fetch", "--all", "--", remote_name.as_str()]);
 
         let output = wait_with_output(self.spawn_cmd(command)?)?;
         if !output.status.success() {

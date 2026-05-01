@@ -1917,8 +1917,56 @@ impl FileSnapshotter<'_> {
             }
         };
         if clean {
-            Ok(None)
-        } else {
+            return Ok(None);
+        }
+
+        // For LFS files in the racy-mtime case (metadata matches but mtime
+        // is in the same clock tick as the tree state save), verify via the
+        // stored LFS pointer's size field instead of re-hashing the file.
+        #[cfg(feature = "git")]
+        if let Some(current_file_state) = maybe_current_file_state
+            && new_file_state.is_clean(current_file_state)
+            && self.tree_state.lfs_enabled
+        {
+            let lfs_filters: HashSet<String> = ["lfs".to_string()].into_iter().collect();
+            if self
+                .git_attributes
+                .filter_matches(repo_path, &lfs_filters, SearchPriority::Disk)
+                .block_on()
+            {
+                let current_tree_values = self.current_tree.path_value(repo_path).await?;
+                if let Some(TreeValue::File { id, .. }) = current_tree_values.as_normal() {
+                    let mut reader =
+                        self.store().read_file(repo_path, id).await.map_err(|err| {
+                            SnapshotError::Other {
+                                message: format!(
+                                    "Failed to read tree blob for {}",
+                                    repo_path.as_internal_file_string()
+                                ),
+                                err: err.into(),
+                            }
+                        })?;
+                    let mut pointer_bytes = Vec::new();
+                    reader
+                        .read_to_end(&mut pointer_bytes)
+                        .await
+                        .map_err(|err| SnapshotError::Other {
+                            message: format!(
+                                "Failed to read LFS pointer for {}",
+                                repo_path.as_internal_file_string()
+                            ),
+                            err: err.into(),
+                        })?;
+                    if let Some(pointer) = git_lfs::parse_lfs_pointer(&pointer_bytes)
+                        && pointer.size == new_file_state.size
+                    {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        {
             let current_tree_values = self.current_tree.path_value(repo_path).await?;
             let new_file_type = if !self.tree_state.symlink_support {
                 let mut new_file_type = new_file_state.file_type.clone();
