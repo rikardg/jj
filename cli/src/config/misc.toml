@@ -26,6 +26,8 @@ disabled-branches = []
 
 [git]
 colocate = true
+ignore-filters = ["lfs"]
+lfs = true
 private-commits = "none()"
 push-new-bookmarks = false
 sign-on-push = false

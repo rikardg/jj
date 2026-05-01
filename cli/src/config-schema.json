@@ -522,6 +522,19 @@
                     "type": "boolean",
                     "description": "Whether to colocate the working copy with the git repository",
                     "default": true
+                },
+                "ignore-filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Names of `.gitattributes` filter attributes whose matching files should be excluded from snapshots",
+                    "default": ["lfs"]
+                },
+                "lfs": {
+                    "type": "boolean",
+                    "description": "Whether to enable Git LFS support. When enabled, files with `filter=lfs` in `.gitattributes` are processed through the LFS clean/smudge pipeline during snapshot and checkout. Requires `git-lfs` to be installed for fetch and push operations.",
+                    "default": true
                 }
             }
         },
