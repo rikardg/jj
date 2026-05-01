@@ -682,7 +682,8 @@ fn test_conflicting_changes_on_disk() -> TestResult {
             updated_files: 0,
             added_files: 3,
             removed_files: 0,
-            skipped_files: 3
+            skipped_files: 3,
+            lfs_missing_objects: 0,
         }
     );
 
@@ -906,7 +907,8 @@ fn test_materialize_snapshot_conflicted_files() -> TestResult {
             updated_files: 0,
             added_files: 2,
             removed_files: 0,
-            skipped_files: 0
+            skipped_files: 0,
+            lfs_missing_objects: 0,
         }
     );
 
