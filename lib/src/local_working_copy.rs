@@ -1733,10 +1733,11 @@ impl FileSnapshotter<'_> {
             if let Some(progress) = self.progress {
                 progress(&path);
             }
-            if self
-                .git_attributes
-                .filter_matches(&path, &self.ignore_filters, SearchPriority::Disk)
-                .block_on()
+            if !self.ignore_filters.is_empty()
+                && self
+                    .git_attributes
+                    .filter_matches(&path, &self.ignore_filters, SearchPriority::Disk)
+                    .block_on()
             {
                 // Skip gitattributes files that we want to ignore - this
                 // would result in them showing up as deleted, but we also
@@ -1887,10 +1888,11 @@ impl FileSnapshotter<'_> {
             .filter(|(_, state)| state.file_type != FileType::GitSubmodule)
             // Whether or not the entry exists, ignored gitattributes files should be omitted
             .filter(|(path, _)| {
-                !self
-                    .git_attributes
-                    .filter_matches(path, &self.ignore_filters, SearchPriority::Disk)
-                    .block_on()
+                self.ignore_filters.is_empty()
+                    || !self
+                        .git_attributes
+                        .filter_matches(path, &self.ignore_filters, SearchPriority::Disk)
+                        .block_on()
             })
             .filter(|(path, _)| self.matcher.matches(path))
             .try_for_each(|(path, _)| self.deleted_files_tx.send(path.to_owned()))
