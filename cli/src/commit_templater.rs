@@ -2546,8 +2546,8 @@ fn builtin_tree_diff_methods<'repo>() -> CommitTemplateBuildMethodFnMap<'repo, T
             let path_converter = language.path_converter;
             let template = self_property
                 .map(move |diff| {
-                    diff.into_formatted(move |formatter, _store, tree_diff, _conflict_labels| {
-                        diff_util::show_diff_summary(formatter, tree_diff, path_converter)
+                    diff.into_formatted(move |formatter, store, tree_diff, _conflict_labels| {
+                        diff_util::show_diff_summary(formatter, tree_diff, path_converter, store)
                             .block_on()
                     })
                 })
