@@ -39,6 +39,7 @@ use crate::cli_util::compute_commit_location;
 use crate::cli_util::print_unmatched_explicit_paths;
 use crate::command_error::CommandError;
 use crate::command_error::user_error;
+use crate::commands::split::build_selection_from_diff;
 use crate::complete;
 use crate::description_util::add_trailers;
 use crate::description_util::combine_messages_for_editing;
@@ -167,6 +168,15 @@ pub(crate) struct SquashArgs {
     #[arg(long, value_name = "NAME")]
     #[arg(add = ArgValueCandidates::new(complete::diff_editors))]
     tool: Option<String>,
+
+    /// Apply a unified diff (git diff format) to select changes for squashing,
+    /// instead of opening an interactive editor.
+    ///
+    /// The diff describes the changes (relative to the parent) to include in
+    /// the squash. Use `-` to read from stdin. This is useful for
+    /// non-interactive / agent-driven workflows.
+    #[arg(long, conflicts_with_all = ["interactive", "tool"], value_name = "FILE")]
+    diff: Option<String>,
 
     /// Move only changes to these paths (instead of all paths)
     #[arg(value_name = "FILESETS", value_hint = clap::ValueHint::AnyPath)]
@@ -319,8 +329,16 @@ pub(crate) async fn cmd_squash(
     let text_editor = tx.base_workspace_helper().text_editor()?;
     let squashed_description = SquashedDescription::from_args(args);
 
-    let source_commits =
-        select_diff(ui, &tx, &sources, &destination, &matcher, &diff_selector).await?;
+    let source_commits = if let Some(diff_path) = &args.diff {
+        if sources.len() != 1 {
+            return Err(user_error(
+                "The --diff flag is only supported with a single source revision",
+            ));
+        }
+        vec![build_selection_from_diff(diff_path, &tx, &sources[0]).await?]
+    } else {
+        select_diff(ui, &tx, &sources, &destination, &matcher, &diff_selector).await?
+    };
 
     print_unmatched_explicit_paths(
         ui,

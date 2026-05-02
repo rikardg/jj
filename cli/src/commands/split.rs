@@ -619,7 +619,7 @@ The changes that are not selected will replace the original commit.
 
 /// Builds a `CommitWithSelection` by applying a unified diff to the parent
 /// tree instead of using an interactive editor.
-async fn build_selection_from_diff(
+pub(crate) async fn build_selection_from_diff(
     diff_path: &str,
     tx: &WorkspaceCommandTransaction<'_>,
     target_commit: &Commit,
