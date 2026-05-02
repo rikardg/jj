@@ -97,43 +97,57 @@ pub(crate) async fn cmd_git_lfs_track(
     Ok(())
 }
 
-fn matches_pattern(file_name: &str, pattern: &str) -> bool {
-    if let Some(ext) = pattern.strip_prefix("*.") {
-        file_name
-            .rsplit_once('.')
-            .is_some_and(|(_, file_ext)| file_ext == ext)
-    } else {
-        file_name == pattern
+fn touch_matching_files(root: &Path, patterns: &[&str]) -> Result<u64, CommandError> {
+    let matchers: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| {
+            globset::Glob::new(p)
+                .ok()
+                .map(|g| (p.contains('/'), g.compile_matcher()))
+        })
+        .collect();
+    if matchers.is_empty() {
+        return Ok(0);
     }
+    let mut count = 0u64;
+    walk_and_touch(root, root, &matchers, &mut count);
+    Ok(count)
 }
 
-fn touch_matching_files(workspace_root: &Path, patterns: &[&str]) -> Result<u64, CommandError> {
+fn walk_and_touch(
+    root: &Path,
+    dir: &Path,
+    matchers: &[(bool, globset::GlobMatcher)],
+    count: &mut u64,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let now = SystemTime::now();
-    let mut count = 0u64;
-    let mut dirs = vec![workspace_root.to_path_buf()];
-    while let Some(dir) = dirs.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str == ".jj" || name_str == ".git" {
-                continue;
-            }
-            let file_type = entry.file_type()?;
-            if file_type.is_dir() {
-                dirs.push(entry.path());
-            } else if file_type.is_file()
-                && patterns.iter().any(|p| matches_pattern(&name_str, p))
-            {
-                let file = std::fs::File::options().write(true).open(entry.path())?;
-                file.set_modified(now)?;
-                count += 1;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default();
+        if name == ".jj" || name == ".git" {
+            continue;
+        }
+        if path.is_dir() {
+            walk_and_touch(root, &path, matchers, count);
+        } else if path.is_file() {
+            let matches = matchers.iter().any(|(has_slash, matcher)| {
+                if *has_slash {
+                    path.strip_prefix(root)
+                        .is_ok_and(|rel| matcher.is_match(rel))
+                } else {
+                    matcher.is_match(name)
+                }
+            });
+            if matches {
+                let times = std::fs::FileTimes::new().set_modified(now);
+                if let Ok(f) = std::fs::File::options().write(true).open(&path) {
+                    drop(f.set_times(times));
+                }
+                *count += 1;
             }
         }
     }
-    Ok(count)
 }

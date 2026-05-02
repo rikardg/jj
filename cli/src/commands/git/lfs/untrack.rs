@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::io::Write as _;
+use std::path::Path;
 
 use tracing::instrument;
 
@@ -86,7 +87,55 @@ pub(crate) async fn cmd_git_lfs_untrack(
         for pattern in &removed {
             writeln!(ui.status(), "Untracking \"{pattern}\" from LFS")?;
         }
+        touch_matching_files(&workspace_root, &removed);
     }
 
     Ok(())
+}
+
+fn touch_matching_files(root: &Path, patterns: &[String]) {
+    let matchers: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| {
+            globset::Glob::new(p)
+                .ok()
+                .map(|g| (p.contains('/'), g.compile_matcher()))
+        })
+        .collect();
+    if matchers.is_empty() {
+        return;
+    }
+    walk_and_touch(root, root, &matchers);
+}
+
+fn walk_and_touch(root: &Path, dir: &Path, matchers: &[(bool, globset::GlobMatcher)]) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default();
+        if name == ".jj" || name == ".git" {
+            continue;
+        }
+        if path.is_dir() {
+            walk_and_touch(root, &path, matchers);
+        } else if path.is_file() {
+            let matches = matchers.iter().any(|(has_slash, matcher)| {
+                if *has_slash {
+                    path.strip_prefix(root)
+                        .is_ok_and(|rel| matcher.is_match(rel))
+                } else {
+                    matcher.is_match(name)
+                }
+            });
+            if matches {
+                let times = std::fs::FileTimes::new().set_modified(now);
+                if let Ok(f) = std::fs::File::options().write(true).open(&path) {
+                    drop(f.set_times(times));
+                }
+            }
+        }
+    }
 }
