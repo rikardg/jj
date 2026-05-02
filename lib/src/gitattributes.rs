@@ -399,6 +399,9 @@ impl GitAttributes {
         ignore_filters: &HashSet<String>,
         priority: SearchPriority,
     ) -> bool {
+        if ignore_filters.is_empty() {
+            return false;
+        }
         let Ok(result) = self.search(path, ["filter"], priority).await else {
             return false;
         };
