@@ -45,6 +45,7 @@ pub(crate) async fn cmd_git_lfs_untrack(
 ) -> Result<(), CommandError> {
     let workspace_command = command.workspace_helper(ui)?;
     let workspace_root = workspace_command.workspace_root().to_owned();
+    let repo_path = workspace_command.repo_path().to_owned();
     drop(workspace_command);
 
     let gitattributes_path = workspace_root.join(".gitattributes");
@@ -88,8 +89,28 @@ pub(crate) async fn cmd_git_lfs_untrack(
             writeln!(ui.status(), "Untracking \"{pattern}\" from LFS")?;
         }
         touch_matching_files(&workspace_root, &removed);
+
+        let remaining_content =
+            std::fs::read_to_string(&gitattributes_path).unwrap_or_default();
+        if !remaining_content.contains("filter=lfs") {
+            disable_lfs(&repo_path)?;
+        }
     }
 
+    Ok(())
+}
+
+fn disable_lfs(repo_path: &Path) -> Result<(), CommandError> {
+    let config_path = repo_path.join("config.toml");
+    let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().unwrap_or_default();
+    if let Some(git) = doc.get_mut("git").and_then(|v| v.as_table_like_mut()) {
+        git.remove("lfs");
+        if git.is_empty() {
+            doc.remove("git");
+        }
+    }
+    std::fs::write(&config_path, doc.to_string())?;
     Ok(())
 }
 

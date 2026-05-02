@@ -110,7 +110,7 @@ impl GitSettings {
         let lfs: bool = settings
             .get("git.lfs")
             .optional()?
-            .unwrap_or(true);
+            .unwrap_or(false);
         let mut ignore_filters: Vec<String> = settings
             .get("git.ignore-filters")
             .optional()?
@@ -3285,16 +3285,28 @@ pub fn push_updates(
         .collect();
 
     if lfs_enabled {
-        let lfs_objects_dir = git_backend.git_repo_path().join("lfs/objects");
-        let has_lfs_objects = std::fs::read_dir(&lfs_objects_dir)
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false);
-        if has_lfs_objects {
-            let new_targets: Vec<String> = updates
-                .iter()
-                .filter_map(|u| u.targets.after.as_ref())
-                .map(|oid| oid.to_string())
-                .collect();
+        let new_target_oids: Vec<&gix::oid> = updates
+            .iter()
+            .filter_map(|u| u.targets.after.as_deref())
+            .collect();
+        let needs_lfs_push = new_target_oids.iter().any(|oid| {
+            let tree = (|| {
+                let obj = git_repo.find_object(*oid).ok()?;
+                let commit = obj.try_into_commit().ok()?;
+                commit.tree().ok()
+            })();
+            let Some(tree) = tree else { return false };
+            tree.iter().flatten().any(|entry| {
+                entry.filename() == ".gitattributes"
+                    && git_repo
+                        .find_object(entry.oid())
+                        .map(|blob| blob.data.windows(10).any(|w| w == b"filter=lfs"))
+                        .unwrap_or(false)
+            })
+        });
+        if needs_lfs_push {
+            let new_targets: Vec<String> =
+                new_target_oids.iter().map(|oid| oid.to_string()).collect();
             if let Err(err) = git_ctx.spawn_lfs_push(remote_name, &new_targets) {
                 tracing::warn!(?err, "LFS push failed (is git-lfs installed?)");
             }
