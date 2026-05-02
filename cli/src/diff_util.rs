@@ -48,6 +48,7 @@ use jj_lib::copies::CopyOperation;
 use jj_lib::copies::CopyRecords;
 use jj_lib::diff::ContentDiff;
 use jj_lib::diff::DiffHunk;
+use jj_lib::git_lfs;
 use jj_lib::diff::DiffHunkKind;
 use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::diff_presentation::FileContent;
@@ -78,6 +79,7 @@ use jj_lib::rewrite::rebase_to_dest_parent;
 use jj_lib::settings::UserSettings;
 use jj_lib::store::Store;
 use thiserror::Error;
+use tokio::io::AsyncReadExt as _;
 use tracing::instrument;
 use unicode_width::UnicodeWidthStr as _;
 
@@ -481,8 +483,13 @@ impl<'a> DiffRenderer<'a> {
             match format {
                 DiffFormat::Summary => {
                     let tree_diff = diff_stream();
-                    show_diff_summary(*formatter.labeled("summary"), tree_diff, path_converter)
-                        .await?;
+                    show_diff_summary(
+                        *formatter.labeled("summary"),
+                        tree_diff,
+                        path_converter,
+                        store,
+                    )
+                    .await?;
                 }
                 DiffFormat::Stat(options) => {
                     let tree_diff = diff_stream();
@@ -1840,6 +1847,7 @@ pub async fn show_diff_summary(
     formatter: &mut dyn Formatter,
     mut tree_diff: BoxStream<'_, CopiesTreeDiffEntry>,
     path_converter: &RepoPathUiConverter,
+    store: &Store,
 ) -> Result<(), DiffRenderError> {
     while let Some(CopiesTreeDiffEntry { path, values }) = tree_diff.next().await {
         let values = values?;
@@ -1849,9 +1857,33 @@ pub async fn show_diff_summary(
             Some(paths) => path_converter.format_copied_path(paths),
             None => path_converter.format_file_path(path.target()),
         };
-        writeln!(formatter.labeled(label), "{sigil} {ui_path}")?;
+        let lfs_suffix = if is_lfs_entry(store, path.target(), &values).await {
+            " (lfs)"
+        } else {
+            ""
+        };
+        writeln!(formatter.labeled(label), "{sigil} {ui_path}{lfs_suffix}")?;
     }
     Ok(())
+}
+
+async fn is_lfs_entry(store: &Store, path: &RepoPath, values: &Diff<MergedTreeValue>) -> bool {
+    let value = if values.after.is_present() {
+        &values.after
+    } else {
+        &values.before
+    };
+    let Some(Some(TreeValue::File { id, .. })) = value.as_resolved() else {
+        return false;
+    };
+    let Ok(mut reader) = store.read_file(path, id).await else {
+        return false;
+    };
+    let mut buf = [0u8; 64];
+    let Ok(n) = reader.read(&mut buf).await else {
+        return false;
+    };
+    git_lfs::is_lfs_pointer(&buf[..n])
 }
 
 fn diff_status_inner(
