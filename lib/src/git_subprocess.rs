@@ -297,19 +297,24 @@ impl GitSubprocessContext {
         parse_git_push_output(output)
     }
 
-    /// Fetch LFS objects from a remote.
+    /// Fetch LFS objects from a remote for the given refs.
     ///
-    /// Runs `git lfs fetch --all <remote>`. Uses `--all` because
-    /// non-colocated repos lack a meaningful HEAD for ref-based fetching.
+    /// Runs `git lfs fetch <remote> <ref>...` for the specific refs that
+    /// were just fetched, mirroring the approach used by `spawn_lfs_push`.
     /// Stderr is captured (not displayed) so that failures are silent —
     /// callers should treat errors as warnings.
     pub(crate) fn spawn_lfs_fetch(
         &self,
         remote_name: &RemoteName,
+        fetched_refs: &[String],
     ) -> Result<(), GitSubprocessError> {
+        if fetched_refs.is_empty() {
+            return Ok(());
+        }
         let mut command = self.create_command();
         command.stdout(Stdio::null());
-        command.args(["lfs", "fetch", "--all", "--", remote_name.as_str()]);
+        command.args(["lfs", "fetch", "--", remote_name.as_str()]);
+        command.args(fetched_refs);
 
         let output = wait_with_output(self.spawn_cmd(command)?)?;
         if !output.status.success() {
@@ -487,7 +492,6 @@ pub struct GitRefUpdates {
     ///
     /// `old_oid`/`new_oid` may be null or point to non-commit objects such as
     /// tags.
-    #[cfg_attr(not(test), expect(dead_code))] // unused as of now
     pub updated: Vec<(GitRefNameBuf, Diff<gix::ObjectId>)>,
     /// Git ref `(name, (old_oid, new_oid)`s that are rejected or failed to
     /// update.

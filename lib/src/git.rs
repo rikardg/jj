@@ -3224,10 +3224,15 @@ impl<'a> GitFetch<'a> {
             tag_matcher: expr.tag.to_matcher(),
         });
 
-        if self.lfs_enabled
-            && let Err(err) = self.git_ctx.spawn_lfs_fetch(remote_name)
-        {
-            tracing::warn!(?err, "LFS fetch failed (is git-lfs installed?)");
+        if self.lfs_enabled {
+            let fetched_refs: Vec<String> = updates
+                .updated
+                .iter()
+                .map(|(name, _)| name.as_str().to_owned())
+                .collect();
+            if let Err(err) = self.git_ctx.spawn_lfs_fetch(remote_name, &fetched_refs) {
+                tracing::warn!(?err, "LFS fetch failed (is git-lfs installed?)");
+            }
         }
 
         Ok(())
