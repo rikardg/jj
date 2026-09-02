@@ -65,6 +65,9 @@ This document contains the help content for the `jj` command-line program.
 * [`jj git fetch`↴](#jj-git-fetch)
 * [`jj git import`↴](#jj-git-import)
 * [`jj git init`↴](#jj-git-init)
+* [`jj git lfs`↴](#jj-git-lfs)
+* [`jj git lfs track`↴](#jj-git-lfs-track)
+* [`jj git lfs untrack`↴](#jj-git-lfs-untrack)
 * [`jj git push`↴](#jj-git-push)
 * [`jj git remote`↴](#jj-git-remote)
 * [`jj git remote add`↴](#jj-git-remote-add)
@@ -1657,6 +1660,7 @@ See this [comparison], including a [table of commands].
 * `fetch` — Fetch from a Git remote
 * `import` — Update repo with changes made in the underlying Git repo
 * `init` — Create a new Git backed repo
+* `lfs` — Manage Git LFS tracking patterns
 * `push` — Push to a Git remote
 * `remote` — Manage Git remotes
 * `root` — Show the underlying Git directory of a repository using the Git backend
@@ -1880,6 +1884,68 @@ Create a new Git backed repo
    If the specified `--git-repo` path happens to be the same as the `jj` repo path (both .jj and .git directories are in the same working directory), then both `jj` and `git` commands will work on the same repo. This is called a colocated workspace.
 
    This option is mutually exclusive with `--colocate`, and so if passed, turns colocation off.
+
+
+
+## `jj git lfs`
+
+Manage Git LFS tracking patterns
+
+These commands modify `.gitattributes` to control which files are stored using Git LFS.
+
+**Usage:** `jj git lfs <COMMAND>`
+
+###### **Subcommands:**
+
+* `track` — Start tracking file patterns with Git LFS
+* `untrack` — Stop tracking file patterns with Git LFS
+
+
+
+## `jj git lfs track`
+
+Start tracking file patterns with Git LFS
+
+Adds entries to `.gitattributes` so that matching files are stored
+using Git LFS. Existing files that match the new patterns will be
+converted to LFS on the next snapshot (any jj command that reads
+the working copy).
+
+Patterns use gitattributes syntax (e.g. `*.bin`, `assets/**`).
+
+Example:
+
+```shell
+jj git lfs track "*.bin" "*.dat"
+```
+
+**Usage:** `jj git lfs track <PATTERNS>...`
+
+###### **Arguments:**
+
+* `<PATTERNS>` — Patterns to track with LFS (gitattributes syntax)
+
+
+
+## `jj git lfs untrack`
+
+Stop tracking file patterns with Git LFS
+
+Removes matching entries from `.gitattributes`. Files that were
+previously stored as LFS pointers will be stored as regular content
+on the next snapshot.
+
+Example:
+
+```shell
+jj git lfs untrack "*.bin"
+```
+
+**Usage:** `jj git lfs untrack <PATTERNS>...`
+
+###### **Arguments:**
+
+* `<PATTERNS>` — Patterns to stop tracking with LFS (gitattributes syntax)
 
 
 
