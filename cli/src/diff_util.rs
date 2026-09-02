@@ -99,6 +99,7 @@ use crate::merge_tools;
 use crate::merge_tools::DiffGenerateError;
 use crate::merge_tools::DiffToolMode;
 use crate::merge_tools::ExternalMergeTool;
+use crate::merge_tools::diff_tree_state_settings;
 use crate::merge_tools::generate_diff;
 use crate::merge_tools::invoke_external_diff;
 use crate::source_symbol::SourceLanguage;
@@ -417,6 +418,8 @@ pub enum DiffRenderError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error(transparent)]
+    Config(#[from] ConfigGetError),
+    #[error(transparent)]
     InvalidRepoPath(#[from] InvalidRepoPathError),
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -437,6 +440,9 @@ pub struct DiffRenderer<'a> {
     path_converter: &'a RepoPathUiConverter,
     formats: Vec<DiffFormat>,
     materialize_options: ConflictMaterializeOptions,
+    /// Needed to derive the tree-state settings for external dir-diff tools,
+    /// which check trees out into temporary working copies.
+    settings: &'a UserSettings,
 }
 
 impl<'a> DiffRenderer<'a> {
@@ -445,6 +451,7 @@ impl<'a> DiffRenderer<'a> {
         path_converter: &'a RepoPathUiConverter,
         marker_style: ConflictMarkerStyle,
         formats: Vec<DiffFormat>,
+        settings: &'a UserSettings,
     ) -> Self {
         let materialize_options = ConflictMaterializeOptions {
             marker_style,
@@ -456,6 +463,7 @@ impl<'a> DiffRenderer<'a> {
             path_converter,
             formats,
             materialize_options,
+            settings,
         }
     }
 
@@ -575,7 +583,10 @@ impl<'a> DiffRenderer<'a> {
                                 trees,
                                 matcher,
                                 tool,
-                                self.materialize_options.marker_style,
+                                &diff_tree_state_settings(
+                                    self.settings,
+                                    self.materialize_options.marker_style,
+                                )?,
                                 width,
                             )
                             .await

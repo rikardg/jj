@@ -204,6 +204,7 @@ async fn do_op_log(
                     path_converter,
                     conflict_marker_style,
                     diff_formats.clone(),
+                    settings,
                 )
             });
 

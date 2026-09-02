@@ -153,8 +153,15 @@ pub async fn cmd_op_diff(
         let formats = diff_formats_for_log(settings, &args.diff_format, args.patch)?;
         let path_converter = workspace_env.path_converter();
         let conflict_marker_style = workspace_env.conflict_marker_style();
-        (!formats.is_empty())
-            .then(|| DiffRenderer::new(merged_repo, path_converter, conflict_marker_style, formats))
+        (!formats.is_empty()).then(|| {
+            DiffRenderer::new(
+                merged_repo,
+                path_converter,
+                conflict_marker_style,
+                formats,
+                settings,
+            )
+        })
     };
     let id_prefix_context = workspace_env.new_id_prefix_context();
     let commit_summary_template = {

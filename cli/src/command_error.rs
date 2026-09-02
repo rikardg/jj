@@ -453,6 +453,7 @@ impl From<DiffRenderError> for CommandError {
         match err {
             DiffRenderError::DiffGenerate(_) => user_error(err),
             DiffRenderError::Backend(err) => err.into(),
+            DiffRenderError::Config(err) => err.into(),
             DiffRenderError::AccessDenied { .. } => user_error(err),
             DiffRenderError::InvalidRepoPath(_) => user_error(err),
             DiffRenderError::Io(err) => err.into(),

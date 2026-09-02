@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashSet;
 use std::io::Write as _;
 
 use clap_complete::ArgValueCompleter;
@@ -117,13 +116,15 @@ pub(crate) async fn cmd_file_edit(
     let state_dir = temp_dir.path().join("state");
     std::fs::create_dir(&wc_path).context(&wc_path)?;
     std::fs::create_dir(&state_dir).context(&state_dir)?;
+    // `ignore_filters` and `lfs_enabled` describe how content is stored, so
+    // they must follow the repo's settings; otherwise the editor would see
+    // LFS pointers and edits would be stored as plain blobs.
     let tree_state_settings = TreeStateSettings {
         conflict_marker_style,
         eol_conversion_mode: EolConversionMode::None,
         exec_change_setting: ExecChangeSetting::Auto,
         fsmonitor_settings: FsmonitorSettings::None,
-        ignore_filters: HashSet::new(),
-        lfs_enabled: false,
+        ..TreeStateSettings::try_from_user_settings(workspace_command.settings())?
     };
     let mut tree_state = TreeState::init(
         repo.store().clone(),
