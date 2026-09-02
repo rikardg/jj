@@ -43,7 +43,7 @@ pub(crate) async fn cmd_git_lfs_untrack(
     command: &CommandHelper,
     args: &GitLfsUntrackArgs,
 ) -> Result<(), CommandError> {
-    let workspace_command = command.workspace_helper(ui)?;
+    let workspace_command = command.workspace_helper(ui).await?;
     let workspace_root = workspace_command.workspace_root().to_owned();
     let repo_path = workspace_command.repo_path().to_owned();
     drop(workspace_command);

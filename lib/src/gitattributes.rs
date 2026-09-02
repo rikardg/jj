@@ -26,13 +26,14 @@ use gix_attributes::Search;
 use gix_attributes::State;
 use gix_attributes::glob::pattern::Case;
 use gix_attributes::search::MetadataCollection;
+use futures::AsyncRead;
+use futures::AsyncReadExt as _;
+use futures::io::AllowStdIo;
 use gix_attributes::search::Outcome;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt as _;
 use tokio::sync::OnceCell;
 
+use crate::backend::MergedTreeValueExt as _;
 use crate::backend::TreeValue;
-use crate::file_util::BlockingAsyncReader;
 use crate::merge::SameChange;
 use crate::merged_tree::MergedTree;
 use crate::repo_path::RepoPath;
@@ -169,7 +170,7 @@ impl FileLoader for DiskFileLoader {
                 });
             }
         };
-        Ok(Some(Box::new(BlockingAsyncReader::new(file))))
+        Ok(Some(Box::new(AllowStdIo::new(file))))
     }
 }
 
@@ -426,7 +427,7 @@ pub struct GitAttributesError {
 #[cfg(test)]
 mod tests {
 
-    use std::io::Cursor;
+    use futures::io::Cursor;
 
     use gix_attributes::state::Value;
     use indoc::indoc;

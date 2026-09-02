@@ -82,7 +82,7 @@ use jj_lib::settings::UserSettings;
 use jj_lib::store::Store;
 use jj_lib::ui_path::RepoPathUiConverter;
 use thiserror::Error;
-use tokio::io::AsyncReadExt as _;
+use futures::AsyncReadExt as _;
 use tracing::instrument;
 use unicode_width::UnicodeWidthStr as _;
 
