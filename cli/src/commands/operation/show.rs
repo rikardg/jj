@@ -126,6 +126,7 @@ pub async fn cmd_op_show(
                 path_converter,
                 conflict_marker_style,
                 formats,
+                settings,
             )
         })
     };

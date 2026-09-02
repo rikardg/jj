@@ -19,6 +19,7 @@ use jj_lib::conflicts::MIN_CONFLICT_MARKER_LEN;
 use jj_lib::conflicts::choose_materialized_conflict_marker_len;
 use jj_lib::conflicts::materialize_merge_result_to_bytes;
 use jj_lib::gitignore::GitIgnoreFile;
+use jj_lib::local_working_copy::TreeStateSettings;
 use jj_lib::matchers::Matcher;
 use jj_lib::merge::Diff;
 use jj_lib::merge::Merge;
@@ -387,11 +388,16 @@ pub async fn edit_diff_external(
     matcher: &dyn Matcher,
     instructions: Option<&str>,
     base_ignores: Arc<GitIgnoreFile>,
-    default_conflict_marker_style: ConflictMarkerStyle,
+    tree_state_settings: &TreeStateSettings,
 ) -> Result<MergedTree, DiffEditError> {
-    let conflict_marker_style = editor
-        .conflict_marker_style
-        .unwrap_or(default_conflict_marker_style);
+    // A tool may override the marker style; everything else (notably the LFS
+    // settings) must stay as derived from the repo.
+    let tree_state_settings = &TreeStateSettings {
+        conflict_marker_style: editor
+            .conflict_marker_style
+            .unwrap_or(tree_state_settings.conflict_marker_style),
+        ..tree_state_settings.clone()
+    };
 
     let got_output_field = find_all_variables(&editor.edit_args).contains(&"output");
     let diff_type = if got_output_field {
@@ -404,7 +410,7 @@ pub async fn edit_diff_external(
         matcher,
         diff_type,
         instructions,
-        conflict_marker_style,
+        tree_state_settings,
     )
     .await?;
 
@@ -450,13 +456,16 @@ pub async fn generate_diff(
     trees: Diff<&MergedTree>,
     matcher: &dyn Matcher,
     tool: &ExternalMergeTool,
-    default_conflict_marker_style: ConflictMarkerStyle,
+    tree_state_settings: &TreeStateSettings,
     width: usize,
 ) -> Result<(), DiffGenerateError> {
-    let conflict_marker_style = tool
-        .conflict_marker_style
-        .unwrap_or(default_conflict_marker_style);
-    let diff_wc = check_out_trees(trees, matcher, DiffType::TwoWay, conflict_marker_style).await?;
+    let tree_state_settings = &TreeStateSettings {
+        conflict_marker_style: tool
+            .conflict_marker_style
+            .unwrap_or(tree_state_settings.conflict_marker_style),
+        ..tree_state_settings.clone()
+    };
+    let diff_wc = check_out_trees(trees, matcher, DiffType::TwoWay, tree_state_settings).await?;
     diff_wc.set_left_readonly()?;
     diff_wc.set_right_readonly()?;
     let mut patterns = diff_wc.to_command_variables(true);

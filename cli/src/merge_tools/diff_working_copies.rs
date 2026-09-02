@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fs::File;
 use std::io;
 use std::io::Write as _;
@@ -8,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::StreamExt as _;
+use jj_lib::config::ConfigGetError;
 use jj_lib::conflicts::ConflictMarkerStyle;
 use jj_lib::fsmonitor::FsmonitorSettings;
 use jj_lib::gitignore::GitIgnoreFile;
@@ -24,6 +24,7 @@ use jj_lib::merged_tree::MergedTree;
 use jj_lib::merged_tree::TreeDiffEntry;
 use jj_lib::repo_path::RepoPath;
 use jj_lib::repo_path::RepoPathBuf;
+use jj_lib::settings::UserSettings;
 use jj_lib::working_copy::CheckoutError;
 use jj_lib::working_copy::SnapshotOptions;
 use tempfile::TempDir;
@@ -150,13 +151,33 @@ pub(crate) enum DiffType {
     ThreeWay,
 }
 
+/// Builds the [`TreeStateSettings`] for the temporary diff working copies.
+///
+/// The workspace-ergonomics fields are pinned, but `ignore_filters` and
+/// `lfs_enabled` are derived from the repo's settings. They describe how file
+/// content is represented in the store rather than how a working copy behaves,
+/// so pinning them would make the tool see LFS pointers instead of content and
+/// would store raw bytes as a plain blob for any path the tool writes.
+pub(crate) fn diff_tree_state_settings(
+    settings: &UserSettings,
+    conflict_marker_style: ConflictMarkerStyle,
+) -> Result<TreeStateSettings, ConfigGetError> {
+    Ok(TreeStateSettings {
+        conflict_marker_style,
+        eol_conversion_mode: EolConversionMode::None,
+        exec_change_setting: ExecChangeSetting::Auto,
+        fsmonitor_settings: FsmonitorSettings::None,
+        ..TreeStateSettings::try_from_user_settings(settings)?
+    })
+}
+
 /// Check out the two trees in temporary directories. Only include changed files
 /// in the sparse checkout patterns.
 pub(crate) async fn check_out_trees(
     trees: Diff<&MergedTree>,
     matcher: &dyn Matcher,
     diff_type: DiffType,
-    conflict_marker_style: ConflictMarkerStyle,
+    tree_state_settings: &TreeStateSettings,
 ) -> Result<DiffWorkingCopies, DiffCheckoutError> {
     let store = trees.before.store();
     let changed_files: Vec<_> = trees
@@ -175,15 +196,7 @@ pub(crate) async fn check_out_trees(
         let state_dir = temp_path.join(format!("{name}_state"));
         std::fs::create_dir(&wc_path).map_err(DiffCheckoutError::SetUpDir)?;
         std::fs::create_dir(&state_dir).map_err(DiffCheckoutError::SetUpDir)?;
-        let tree_state_settings = TreeStateSettings {
-            conflict_marker_style,
-            eol_conversion_mode: EolConversionMode::None,
-            exec_change_setting: ExecChangeSetting::Auto,
-            fsmonitor_settings: FsmonitorSettings::None,
-            ignore_filters: HashSet::new(),
-            lfs_enabled: false,
-        };
-        let mut state = TreeState::init(store.clone(), wc_path, state_dir, &tree_state_settings)?;
+        let mut state = TreeState::init(store.clone(), wc_path, state_dir, tree_state_settings)?;
         state.set_sparse_patterns(changed_files.clone())?;
         state.check_out(tree)?;
         Ok(state)
@@ -216,10 +229,10 @@ impl DiffEditWorkingCopies {
         matcher: &dyn Matcher,
         diff_type: DiffType,
         instructions: Option<&str>,
-        conflict_marker_style: ConflictMarkerStyle,
+        tree_state_settings: &TreeStateSettings,
     ) -> Result<Self, DiffEditError> {
         let working_copies =
-            check_out_trees(trees, matcher, diff_type, conflict_marker_style).await?;
+            check_out_trees(trees, matcher, diff_type, tree_state_settings).await?;
         working_copies.set_left_readonly()?;
         if diff_type == DiffType::ThreeWay {
             working_copies.set_right_readonly()?;

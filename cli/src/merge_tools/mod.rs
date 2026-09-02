@@ -31,6 +31,7 @@ use jj_lib::conflicts::ConflictMarkerStyle;
 use jj_lib::conflicts::MaterializedFileConflictValue;
 use jj_lib::conflicts::try_materialize_file_conflict_value;
 use jj_lib::gitignore::GitIgnoreFile;
+use jj_lib::local_working_copy::TreeStateSettings;
 use jj_lib::matchers::Matcher;
 use jj_lib::merge::Diff;
 use jj_lib::merge::Merge;
@@ -48,6 +49,7 @@ use self::builtin::BuiltinToolError;
 use self::builtin::edit_diff_builtin;
 use self::builtin::edit_merge_builtin;
 use self::diff_working_copies::DiffCheckoutError;
+pub(crate) use self::diff_working_copies::diff_tree_state_settings;
 pub(crate) use self::diff_working_copies::new_utf8_temp_dir;
 pub use self::external::DiffToolMode;
 pub use self::external::ExternalMergeTool;
@@ -237,6 +239,9 @@ pub struct DiffEditor {
     base_ignores: Arc<GitIgnoreFile>,
     use_instructions: bool,
     conflict_marker_style: ConflictMarkerStyle,
+    /// Tree-state settings for the temporary diff working copies, derived from
+    /// the repo so LFS-tracked paths round-trip correctly.
+    tree_state_settings: TreeStateSettings,
 }
 
 impl DiffEditor {
@@ -289,6 +294,7 @@ impl DiffEditor {
             base_ignores,
             use_instructions: settings.get_bool("ui.diff-instructions")?,
             conflict_marker_style,
+            tree_state_settings: diff_tree_state_settings(settings, conflict_marker_style)?,
         })
     }
 
@@ -315,7 +321,7 @@ impl DiffEditor {
                     matcher,
                     instructions.as_deref(),
                     self.base_ignores.clone(),
-                    self.conflict_marker_style,
+                    &self.tree_state_settings,
                 )
                 .await
             }

@@ -1720,6 +1720,7 @@ to the current parents may contain changes from multiple commits.
             self.path_converter(),
             self.env.conflict_marker_style(),
             formats,
+            self.settings(),
         )
     }
 
