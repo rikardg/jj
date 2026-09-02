@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use bstr::BStr;
 use bstr::BString;
 use clap_complete::ArgValueCandidates;
+use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 use futures::stream::BoxStream;
@@ -82,7 +83,6 @@ use jj_lib::settings::UserSettings;
 use jj_lib::store::Store;
 use jj_lib::ui_path::RepoPathUiConverter;
 use thiserror::Error;
-use tokio::io::AsyncReadExt as _;
 use tracing::instrument;
 use unicode_width::UnicodeWidthStr as _;
 
