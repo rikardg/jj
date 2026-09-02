@@ -36,6 +36,7 @@ use jj_lib::backend::BackendError;
 use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::commit::CommitIteratorExt as _;
+use jj_lib::config::ConfigGetError;
 use jj_lib::conflicts::ConflictMarkerStyle;
 use jj_lib::fsmonitor::FsmonitorSettings;
 use jj_lib::gitignore::GitIgnoreFile;
@@ -54,6 +55,7 @@ use jj_lib::merged_tree::MergedTree;
 use jj_lib::object_id::ObjectId as _;
 use jj_lib::repo::Repo as _;
 use jj_lib::repo_path::RepoPathBuf;
+use jj_lib::settings::UserSettings;
 use jj_lib::working_copy::CheckoutError;
 use jj_lib::working_copy::SnapshotError;
 use jj_lib::working_copy::SnapshotOptions;
@@ -113,13 +115,20 @@ impl From<RunError> for CommandError {
     }
 }
 
-fn default_tree_state_settings() -> TreeStateSettings {
-    TreeStateSettings {
+fn default_tree_state_settings(
+    settings: &UserSettings,
+) -> Result<TreeStateSettings, ConfigGetError> {
+    Ok(TreeStateSettings {
         conflict_marker_style: ConflictMarkerStyle::Snapshot,
         eol_conversion_mode: EolConversionMode::None,
         exec_change_setting: ExecChangeSetting::Auto,
         fsmonitor_settings: FsmonitorSettings::None,
-    }
+        // `ignore_filters`/`lfs_enabled` describe the repo's data model rather
+        // than workspace ergonomics, so they must match the repo. Hardcoding
+        // them would make run slots see LFS pointers instead of real content,
+        // and store raw bytes as plain blobs for paths the job writes.
+        ..TreeStateSettings::try_from_user_settings(settings)?
+    })
 }
 
 /// A workspace that's ready for a single job to run against.
@@ -183,6 +192,10 @@ struct WorkspacePool {
     /// Sparse patterns that influence what parts of the tree are materialized
     /// when running the command. If None, whole tree is materialized.
     sparsity: Option<Vec<RepoPathBuf>>,
+    /// Tree-state settings for slot working copies, derived from the repo's
+    /// own settings so LFS behaves in a slot exactly as it does in the
+    /// user's working copy.
+    tree_state_settings: TreeStateSettings,
 }
 
 impl WorkspacePool {
@@ -192,6 +205,7 @@ impl WorkspacePool {
         auto_tracking_matcher: Box<dyn Matcher>,
         clean: bool,
         sparsity: Option<Vec<RepoPathBuf>>,
+        tree_state_settings: TreeStateSettings,
     ) -> Result<Self, RunError> {
         // The parent() call is needed to not write under `.jj/repo/`.
         let base_path = repo_path.parent().unwrap().join("run").join("default");
@@ -202,6 +216,7 @@ impl WorkspacePool {
             auto_tracking_matcher,
             clean,
             sparsity,
+            tree_state_settings,
         })
     }
 
@@ -228,7 +243,7 @@ impl WorkspacePool {
         let tree_state_path = state_dir.join("tree_state");
 
         let is_reused_workspace = tree_state_path.exists();
-        let settings = default_tree_state_settings();
+        let settings = &self.tree_state_settings;
         let mut tree_state = if !self.clean && is_reused_workspace {
             // Load the persisted tree state so `check_out` below can diff
             // against it, only touching files that changed and removing files
@@ -242,7 +257,7 @@ impl WorkspacePool {
                 commit.store().clone(),
                 working_copy_dir.clone(),
                 state_dir.clone(),
-                &settings,
+                settings,
             )?;
             fs::remove_file(&tree_state_path)?;
             ts
@@ -272,7 +287,7 @@ impl WorkspacePool {
                 commit.store().clone(),
                 working_copy_dir.clone(),
                 state_dir,
-                &settings,
+                settings,
             )
         };
 
@@ -819,6 +834,7 @@ pub async fn cmd_run(
 
     let store = workspace_command.repo().store().clone();
     let auto_tracking_matcher = workspace_command.auto_tracking_matcher(ui)?;
+    let tree_state_settings = default_tree_state_settings(workspace_command.settings())?;
 
     let sparsity = match args.sparse_patterns {
         SparseInheritance::Full => None,
@@ -845,6 +861,7 @@ pub async fn cmd_run(
         auto_tracking_matcher,
         args.clean,
         sparsity,
+        tree_state_settings,
     )?);
 
     let spec = Arc::new(CommandSpec {

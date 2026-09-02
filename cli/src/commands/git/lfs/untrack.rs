@@ -46,7 +46,7 @@ pub(crate) async fn cmd_git_lfs_untrack(
     command: &CommandHelper,
     args: &GitLfsUntrackArgs,
 ) -> Result<(), CommandError> {
-    let workspace_command = command.workspace_helper(ui)?;
+    let workspace_command = command.workspace_helper(ui).await?;
     let workspace_root = workspace_command.workspace_root().to_owned();
     let repo_path = workspace_command.repo_path().to_owned();
     drop(workspace_command);
@@ -93,8 +93,7 @@ pub(crate) async fn cmd_git_lfs_untrack(
         }
         touch_matching_files(&workspace_root, &removed);
 
-        let remaining_content =
-            std::fs::read_to_string(&gitattributes_path).unwrap_or_default();
+        let remaining_content = std::fs::read_to_string(&gitattributes_path).unwrap_or_default();
         if !remaining_content.contains("filter=lfs") {
             disable_lfs(&repo_path)?;
         }
