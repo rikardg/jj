@@ -93,8 +93,7 @@ pub(crate) async fn cmd_git_lfs_untrack(
         }
         touch_matching_files(&workspace_root, &removed);
 
-        let remaining_content =
-            std::fs::read_to_string(&gitattributes_path).unwrap_or_default();
+        let remaining_content = std::fs::read_to_string(&gitattributes_path).unwrap_or_default();
         if !remaining_content.contains("filter=lfs") {
             disable_lfs(&repo_path)?;
         }

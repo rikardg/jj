@@ -428,7 +428,6 @@ pub struct GitAttributesError {
 mod tests {
 
     use futures::io::Cursor;
-
     use gix_attributes::state::Value;
     use indoc::indoc;
     use pollster::FutureExt as _;

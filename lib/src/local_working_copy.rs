@@ -2175,10 +2175,13 @@ impl FileSnapshotter<'_> {
         path: &RepoPath,
         disk_path: &Path,
     ) -> Result<FileId, SnapshotError> {
-        let git_dir = self.tree_state.git_dir().ok_or_else(|| SnapshotError::Other {
-            message: "Git LFS requires a git backend".to_string(),
-            err: "no git backend found".into(),
-        })?;
+        let git_dir = self
+            .tree_state
+            .git_dir()
+            .ok_or_else(|| SnapshotError::Other {
+                message: "Git LFS requires a git backend".to_string(),
+                err: "no git backend found".into(),
+            })?;
         let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
@@ -2568,25 +2571,21 @@ impl TreeState {
                             .await
                         {
                             let mut content = Vec::new();
-                            file.reader.read_to_end(&mut content).await.map_err(
-                                |err| CheckoutError::Other {
+                            file.reader.read_to_end(&mut content).await.map_err(|err| {
+                                CheckoutError::Other {
                                     message: format!(
                                         "Failed to read LFS content for {}",
                                         path.as_internal_file_string()
                                     ),
                                     err: err.into(),
-                                },
-                            )?;
+                                }
+                            })?;
                             if let Some(pointer) = git_lfs::parse_lfs_pointer(&content) {
                                 if let Some(git_dir) = self.git_dir() {
                                     match git_lfs::read_lfs_object(git_dir, &pointer) {
-                                        Ok(lfs_file) => Some(Box::new(
-                                            AllowStdIo::new(
-                                                std::io::BufReader::with_capacity(
-                                                    65536, lfs_file,
-                                                ),
-                                            ),
-                                        )
+                                        Ok(lfs_file) => Some(Box::new(AllowStdIo::new(
+                                            std::io::BufReader::with_capacity(65536, lfs_file),
+                                        ))
                                             as Box<dyn AsyncRead + Send + Unpin>),
                                         Err(_) => {
                                             tracing::warn!(

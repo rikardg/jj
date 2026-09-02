@@ -68,11 +68,13 @@ pub(crate) async fn cmd_git_lfs_track(
         }
         let attr_line = format!("{pattern} filter=lfs diff=lfs merge=lfs -text");
         let already_tracked = lines.iter().any(|line| {
-            line.split_whitespace().next() == Some(pattern.as_str())
-                && line.contains("filter=lfs")
+            line.split_whitespace().next() == Some(pattern.as_str()) && line.contains("filter=lfs")
         });
         if already_tracked {
-            writeln!(ui.status(), "Pattern \"{pattern}\" is already tracked by LFS")?;
+            writeln!(
+                ui.status(),
+                "Pattern \"{pattern}\" is already tracked by LFS"
+            )?;
         } else {
             lines.push(attr_line);
             added.push(pattern.as_str());

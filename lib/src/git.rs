@@ -116,10 +116,7 @@ pub struct GitSettings {
 
 impl GitSettings {
     pub fn from_settings(settings: &UserSettings) -> Result<Self, ConfigGetError> {
-        let lfs: bool = settings
-            .get("git.lfs")
-            .optional()?
-            .unwrap_or(false);
+        let lfs: bool = settings.get("git.lfs").optional()?.unwrap_or(false);
         let mut ignore_filters: Vec<String> = settings
             .get("git.ignore-filters")
             .optional()?
