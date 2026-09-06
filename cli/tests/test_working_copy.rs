@@ -246,6 +246,80 @@ fn test_lfs_roundtrip() {
 }
 
 #[test]
+fn test_lfs_snapshot_preserves_existing_pointer() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    // A working-copy file that already holds a pointer is stored as it is.
+    // Cleaning it again would record a pointer to this text instead.
+    work_dir.write_file(
+        "asset.bin",
+        "version https://git-lfs.github.com/spec/v1\n\
+         oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\n\
+         size 12345\n",
+    );
+
+    let output = work_dir.run_jj(["file", "show", "asset.bin"]);
+    insta::assert_snapshot!(output, @"
+    version https://git-lfs.github.com/spec/v1
+    oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393
+    size 12345
+    [EOF]
+    ");
+}
+
+#[test]
+fn test_lfs_missing_object_placeholder_is_not_reconverted() {
+    let test_env = TestEnvironment::default();
+    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
+    let work_dir = test_env.work_dir("repo");
+
+    work_dir.write_file(".gitattributes", "*.bin filter=lfs\n");
+    work_dir.write_file("asset.bin", "stored content\n");
+    work_dir.run_jj(["describe", "-m", "asset"]).success();
+    let asset_id = work_dir.run_jj(["log", "-r", "@", "-T", "commit_id", "--no-graph"]);
+    let asset_id = asset_id.stdout.raw().trim().to_string();
+    let pointer = work_dir.run_jj(["file", "show", "asset.bin"]);
+    let pointer = pointer.stdout.raw().to_string();
+
+    // Leave the commit, then drop the cached object so that checking it out
+    // again has nothing to smudge with.
+    work_dir.run_jj(["new", "root()"]).success();
+    work_dir.remove_dir_all(".jj/repo/store/git/lfs");
+
+    let output = work_dir.run_jj(["edit", &asset_id]);
+    insta::assert_snapshot!(output, @r"
+    ------- stderr -------
+    Working copy  (@) now at: qpvuntsm fe2e2d9b asset
+    Parent commit (@-)      : zzzzzzzz 00000000 (empty) (no description set)
+    Added 2 files, modified 0 files, removed 0 files
+    Warning: 1 file(s) are LFS pointers because the objects are not in the local cache.
+    Hint: Run `jj git fetch` to download the LFS objects.
+    [EOF]
+    ");
+
+    // The checkout leaves the pointer itself in the working copy.
+    assert_eq!(work_dir.read_file("asset.bin"), pointer.as_bytes());
+
+    // Anything that dirties the mtime re-snapshots that placeholder. It must
+    // be stored unchanged, not cleaned into a pointer to the pointer text.
+    work_dir.write_file("asset.bin", &pointer);
+
+    // The oid and size are still those of "stored content\n", so the commit
+    // keeps pointing at the real object.
+    let output = work_dir.run_jj(["file", "show", "asset.bin"]);
+    insta::assert_snapshot!(output, @"
+    version https://git-lfs.github.com/spec/v1
+    oid sha256:b6cb5a93195c82a98e2ab194fba2d79363078f5877ae3b0d7491d8f5dfdbb217
+    size 15
+    [EOF]
+    ");
+    assert_eq!(output.stdout.raw(), pointer);
+}
+
+#[test]
 fn test_snapshot_large_file_restore() {
     let test_env = TestEnvironment::default();
     test_env.run_jj_in(".", ["git", "init", "repo"]).success();

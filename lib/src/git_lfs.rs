@@ -18,6 +18,7 @@ use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Read;
+use std::io::Seek as _;
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,6 +28,12 @@ use sha2::Sha256;
 
 const LFS_VERSION_LINE: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_OID_PREFIX: &str = "oid sha256:";
+
+/// Largest file that is worth inspecting as an LFS pointer.
+///
+/// The spec caps pointers at 1024 bytes; the ones Git LFS writes are around
+/// 130. Anything bigger is content, so it isn't read into memory.
+const MAX_LFS_POINTER_SIZE: u64 = 1024;
 
 /// A parsed Git LFS pointer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +99,29 @@ pub fn lfs_cache_path(git_dir: &Path, oid: &str) -> PathBuf {
 pub fn read_lfs_object(git_dir: &Path, pointer: &LfsPointer) -> io::Result<File> {
     let path = lfs_cache_path(git_dir, &pointer.oid);
     File::open(path)
+}
+
+/// Returns the contents of `file` if they are already an LFS pointer.
+///
+/// `file` is rewound before returning, so the caller can read it from the
+/// start whichever way this goes.
+///
+/// A working-copy file can already hold a pointer: the checkout writes one as
+/// a placeholder when the object is missing from the local cache, and Git
+/// writes one when it checks the file out without the LFS smudge filter
+/// configured. Such a file must be stored verbatim rather than cleaned again,
+/// which would produce a pointer to the pointer text and detach the commit
+/// from the real content.
+pub fn read_lfs_pointer_file(file: &mut File) -> io::Result<Option<Vec<u8>>> {
+    let size = file.metadata()?.len();
+    if size > MAX_LFS_POINTER_SIZE {
+        return Ok(None);
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    let read = file.read_to_end(&mut bytes);
+    file.rewind()?;
+    read?;
+    Ok(parse_lfs_pointer(&bytes).is_some().then_some(bytes))
 }
 
 /// Writes content to the LFS object cache using streaming SHA-256 hashing.
@@ -229,6 +259,48 @@ size 12345
                  4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393"
             )
         );
+    }
+
+    #[test]
+    fn test_read_lfs_pointer_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let write = |name: &str, content: &[u8]| {
+            let path = temp_dir.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            File::open(&path).unwrap()
+        };
+
+        // A pointer file is returned verbatim, and left readable from the start.
+        let mut file = write("pointer", SAMPLE_POINTER.as_bytes());
+        assert_eq!(
+            read_lfs_pointer_file(&mut file).unwrap().as_deref(),
+            Some(SAMPLE_POINTER.as_bytes())
+        );
+        let mut rest = Vec::new();
+        file.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, SAMPLE_POINTER.as_bytes());
+
+        // Ordinary content is not, however small.
+        let mut file = write("content", b"stored content\n");
+        assert!(read_lfs_pointer_file(&mut file).unwrap().is_none());
+        let mut rest = Vec::new();
+        file.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"stored content\n");
+
+        // Neither is content that merely starts like a pointer.
+        let truncated = SAMPLE_POINTER.strip_suffix("size 12345\n").unwrap();
+        let mut file = write("truncated", truncated.as_bytes());
+        assert!(read_lfs_pointer_file(&mut file).unwrap().is_none());
+
+        // A file too big to be a pointer is not read at all.
+        let mut oversized = SAMPLE_POINTER.as_bytes().to_vec();
+        oversized.resize(MAX_LFS_POINTER_SIZE as usize + 1, b'\n');
+        let mut file = write("oversized", &oversized);
+        assert!(read_lfs_pointer_file(&mut file).unwrap().is_none());
+
+        let mut file = write("empty", b"");
+        assert!(read_lfs_pointer_file(&mut file).unwrap().is_none());
     }
 
     #[test]

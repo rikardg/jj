@@ -2182,19 +2182,33 @@ impl FileSnapshotter<'_> {
                 message: "Git LFS requires a git backend".to_string(),
                 err: "no git backend found".into(),
             })?;
-        let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
+        let mut file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
         })?;
-        let pointer =
-            git_lfs::write_lfs_object(git_dir, file).map_err(|err| SnapshotError::Other {
-                message: format!(
-                    "Failed to write LFS object for {}",
-                    path.as_internal_file_string()
-                ),
+        // A file that is already a pointer is stored as it is. Cleaning it
+        // again would record a pointer to the pointer text, silently dropping
+        // the real content from the commit.
+        let existing_pointer =
+            git_lfs::read_lfs_pointer_file(&mut file).map_err(|err| SnapshotError::Other {
+                message: format!("Failed to read file {}", disk_path.display()),
                 err: err.into(),
             })?;
-        let pointer_bytes = git_lfs::generate_lfs_pointer(&pointer);
+        let pointer_bytes = match existing_pointer {
+            Some(pointer_bytes) => pointer_bytes,
+            None => {
+                let pointer = git_lfs::write_lfs_object(git_dir, file).map_err(|err| {
+                    SnapshotError::Other {
+                        message: format!(
+                            "Failed to write LFS object for {}",
+                            path.as_internal_file_string()
+                        ),
+                        err: err.into(),
+                    }
+                })?;
+                git_lfs::generate_lfs_pointer(&pointer)
+            }
+        };
         let mut cursor = futures::io::Cursor::new(pointer_bytes);
         Ok(self.store().write_file(path, &mut cursor).await?)
     }
